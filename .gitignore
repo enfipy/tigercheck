@@ -1,0 +1,18 @@
+/tigercheck
+/tigercheck.exe
+.zig-cache/
+zig-cache/
+zig-out/
+
+# Death to .DS_Store
+.DS_Store
+
+# Forks
+/zls/
+/tigerbeetle
+
+# zig
+/zig/*
+!/zig/download.win.ps1
+!/zig/download.ps1
+!/zig/download.sh
