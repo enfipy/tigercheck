@@ -53,11 +53,16 @@ const release_script_template =
     \\)
     \\
     \\echo "release: creating draft release ${VERSION}"
-    \\gh release create "${VERSION}" \\
-    \\  --draft \\
-    \\  --title "tigercheck ${VERSION}" \\
-    \\  --notes "Release ${VERSION}" \\
-    \\  --target "${SHA}"
+    \\if [ -z "${GITHUB_REPOSITORY:-}" ]; then
+    \\  echo "GITHUB_REPOSITORY is required"
+    \\  exit 1
+    \\fi
+    \\gh api --method POST "repos/${GITHUB_REPOSITORY}/releases" \\
+    \\  -f tag_name="${VERSION}" \\
+    \\  -f target_commitish="${SHA}" \\
+    \\  -f name="tigercheck ${VERSION}" \\
+    \\  -f body="Release ${VERSION}" \\
+    \\  -F draft=true >/dev/null
     \\
     \\gh release upload "${VERSION}" \\
     \\  zig-out/dist/tigercheck/tigercheck-x86_64-linux.zip \\
