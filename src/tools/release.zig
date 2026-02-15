@@ -125,8 +125,12 @@ const validate_script =
     \\  linux_archive=zig-out/release-validate/tigercheck-x86_64-linux.zip
     \\  unzip -o "${linux_archive}" -d zig-out/release-validate/bin
     \\  chmod +x zig-out/release-validate/bin/tigercheck
-    \\  if ! zig-out/release-validate/bin/tigercheck 2>&1 | grep -q '^usage: tigercheck'; then
+    \\  usage_output="$(zig-out/release-validate/bin/tigercheck 2>&1 || true)"
+    \\  if printf '%s\\n' "${usage_output}" | grep -q '^usage: tigercheck'; then
+    \\    :
+    \\  else
     \\    echo "Unexpected tigercheck usage output"
+    \\    printf '%s\\n' "${usage_output}"
     \\    exit 1
     \\  fi
     \\else
