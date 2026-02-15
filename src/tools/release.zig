@@ -55,8 +55,8 @@ const release_script_template =
     \\echo "release: creating draft release ${VERSION}"
     \\gh release create "${VERSION}" \\
     \\  --draft \\
-    \\  --generate-notes \\
     \\  --title "tigercheck ${VERSION}" \\
+    \\  --notes "Release ${VERSION}" \\
     \\  --target "${SHA}"
     \\
     \\gh release upload "${VERSION}" \\
