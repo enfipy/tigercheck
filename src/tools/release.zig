@@ -57,19 +57,26 @@ const release_script_template =
     \\  echo "GITHUB_REPOSITORY is required"
     \\  exit 1
     \\fi
-    \\gh api --method POST "repos/${GITHUB_REPOSITORY}/releases" \\
-    \\  -f tag_name="${VERSION}" \\
-    \\  -f target_commitish="${SHA}" \\
-    \\  -f name="tigercheck ${VERSION}" \\
-    \\  -f body="Release ${VERSION}" \\
-    \\  -F draft=true >/dev/null
+    \\create_args=(
+    \\  --method POST
+    \\  "repos/${GITHUB_REPOSITORY}/releases"
+    \\  -f "tag_name=${VERSION}"
+    \\  -f "target_commitish=${SHA}"
+    \\  -f "name=tigercheck ${VERSION}"
+    \\  -f "body=Release ${VERSION}"
+    \\  -F "draft=true"
+    \\)
+    \\gh api "${create_args[@]}" >/dev/null
     \\
-    \\gh release upload "${VERSION}" \\
-    \\  zig-out/dist/tigercheck/tigercheck-x86_64-linux.zip \\
-    \\  zig-out/dist/tigercheck/tigercheck-aarch64-linux.zip \\
-    \\  zig-out/dist/tigercheck/tigercheck-x86_64-windows.zip \\
-    \\  zig-out/dist/tigercheck/tigercheck-aarch64-macos.zip \\
+    \\upload_args=(
+    \\  "${VERSION}"
+    \\  zig-out/dist/tigercheck/tigercheck-x86_64-linux.zip
+    \\  zig-out/dist/tigercheck/tigercheck-aarch64-linux.zip
+    \\  zig-out/dist/tigercheck/tigercheck-x86_64-windows.zip
+    \\  zig-out/dist/tigercheck/tigercheck-aarch64-macos.zip
     \\  zig-out/dist/tigercheck/SHA256SUMS
+    \\)
+    \\gh release upload "${upload_args[@]}"
     \\
     \\gh release edit "${VERSION}" --draft=false --latest=true
     \\echo "release: release ${VERSION} complete"
@@ -93,12 +100,14 @@ const validate_script =
     \\mkdir -p zig-out/release-validate
     \\gh release download "${TAG}" --dir zig-out/release-validate
     \\
-    \\for artifact in \\
-    \\  tigercheck-x86_64-linux.zip \\
-    \\  tigercheck-aarch64-linux.zip \\
-    \\  tigercheck-x86_64-windows.zip \\
-    \\  tigercheck-aarch64-macos.zip \\
-    \\  SHA256SUMS; do
+    \\artifact_names=(
+    \\  tigercheck-x86_64-linux.zip
+    \\  tigercheck-aarch64-linux.zip
+    \\  tigercheck-x86_64-windows.zip
+    \\  tigercheck-aarch64-macos.zip
+    \\  SHA256SUMS
+    \\)
+    \\for artifact in "${artifact_names[@]}"; do
     \\  if [ ! -f "zig-out/release-validate/${artifact}" ]; then
     \\    echo "Missing release artifact: ${artifact}"
     \\    exit 1
@@ -113,8 +122,8 @@ const validate_script =
     \\if [ "$(uname -s)" = "Linux" ]; then
     \\  rm -rf zig-out/release-validate/bin
     \\  mkdir -p zig-out/release-validate/bin
-    \\  unzip -o zig-out/release-validate/tigercheck-x86_64-linux.zip \\
-    \\    -d zig-out/release-validate/bin
+    \\  linux_archive=zig-out/release-validate/tigercheck-x86_64-linux.zip
+    \\  unzip -o "${linux_archive}" -d zig-out/release-validate/bin
     \\  chmod +x zig-out/release-validate/bin/tigercheck
     \\  if ! zig-out/release-validate/bin/tigercheck 2>&1 | grep -q '^usage: tigercheck'; then
     \\    echo "Unexpected tigercheck usage output"
