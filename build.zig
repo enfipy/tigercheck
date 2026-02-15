@@ -63,6 +63,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/tools/perf_bench.zig"),
             .target = target,
             .optimize = optimize,
+            .link_libc = true,
         }),
     });
     const perf_bench_cmd = b.addRunArtifact(perf_bench);
