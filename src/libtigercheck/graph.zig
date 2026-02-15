@@ -304,7 +304,7 @@ fn maybe_record_import(
     const import_rel = import_quoted[1 .. import_quoted.len - 1];
     const resolved = resolve_import_path(arena, module.path, import_rel) catch |err| {
         if (err == error.PackageImport) {
-            return; // Skip package imports (std, libtiger, etc.)
+            return; // Skip package imports (std, libtigercheck, etc.)
         }
         return err;
     };
@@ -613,7 +613,7 @@ fn resolve_import_path(
     }
 
     // Package aliases without path separators are not resolvable as files
-    // (e.g., "libtiger" defined in build.zig, not "./libtiger.zig")
+    // (e.g., "libtigercheck" defined in build.zig, not "./libtigercheck.zig")
     if (!std.mem.containsAtLeast(u8, import_rel, 1, "/") and
         !std.mem.endsWith(u8, import_rel, ".zig"))
     {

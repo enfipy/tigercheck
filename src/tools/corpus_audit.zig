@@ -1,13 +1,13 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const libtiger = @import("libtiger");
+const libtigercheck = @import("libtigercheck");
 const corpus_common = @import("corpus_common.zig");
 
-const rule_count: usize = @typeInfo(libtiger.rules.Id).@"enum".fields.len;
-const all_rule_ids: [rule_count]libtiger.rules.Id = blk: {
-    var out: [rule_count]libtiger.rules.Id = undefined;
-    for (@typeInfo(libtiger.rules.Id).@"enum".fields, 0..) |field, i| {
-        out[i] = @field(libtiger.rules.Id, field.name);
+const rule_count: usize = @typeInfo(libtigercheck.rules.Id).@"enum".fields.len;
+const all_rule_ids: [rule_count]libtigercheck.rules.Id = blk: {
+    var out: [rule_count]libtigercheck.rules.Id = undefined;
+    for (@typeInfo(libtigercheck.rules.Id).@"enum".fields, 0..) |field, i| {
+        out[i] = @field(libtigercheck.rules.Id, field.name);
     }
     break :blk out;
 };
@@ -325,8 +325,8 @@ fn audit_has_failures(audit: *const AuditData) bool {
     return audit.missing_pass_or_fail.items.len > 0;
 }
 
-fn rule_prefix(rule_id: libtiger.rules.Id) []const u8 {
-    const id = libtiger.rules.id_string(rule_id);
+fn rule_prefix(rule_id: libtigercheck.rules.Id) []const u8 {
+    const id = libtigercheck.rules.id_string(rule_id);
     assert(id.len > 0);
     if (id.len == 0) {
         return id;

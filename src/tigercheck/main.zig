@@ -1,7 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const libtiger = @import("libtiger");
-const rules = libtiger.rules;
+const libtigercheck = @import("libtigercheck");
+const rules = libtigercheck.rules;
 
 const HistogramCount = u32;
 const HistogramEntry = struct {
@@ -13,7 +13,7 @@ const CliOptions = struct {
     dump_graph: bool,
     explain_policy: bool,
     explain_strict: bool,
-    profile: libtiger.policy.Profile,
+    profile: libtigercheck.policy.Profile,
     target_path: []const u8,
 };
 
@@ -119,7 +119,7 @@ pub fn main(init: std.process.Init) !void {
     };
     assert(cli.target_path.len > 0);
 
-    var call_graph = try libtiger.graph.build_from_path(allocator, cli.target_path);
+    var call_graph = try libtigercheck.graph.build_from_path(allocator, cli.target_path);
     defer call_graph.deinit();
 
     var stdout_buf: [4096]u8 = undefined;
@@ -133,7 +133,7 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    var result = try libtiger.analysis.analyze_with_options(allocator, &call_graph, .{
+    var result = try libtigercheck.analysis.analyze_with_options(allocator, &call_graph, .{
         .profile = cli.profile,
     });
     defer result.deinit();
@@ -181,36 +181,36 @@ fn print_usage() void {
 }
 
 fn parse_cli_options(init: std.process.Init) !CliOptions {
-    var args = init.minimal.args.iterate();
-    const argv0 = args.next();
-    assert(argv0 != null);
+    var args_arena = std.heap.ArenaAllocator.init(init.gpa);
+    defer args_arena.deinit();
+    const argv = try init.minimal.args.toSlice(args_arena.allocator());
+    const arg_count = argv.len;
+    assert(arg_count > 0);
 
     var option_flags: u8 = 0;
-    var profile: libtiger.policy.Profile = .strict_core;
+    var profile: libtigercheck.policy.Profile = .strict_core;
     var target_path: ?[]const u8 = null;
 
-    while (args.next()) |arg| {
-        const kind = cli_arg_kind(arg);
-        if (kind == .unknown) return error.InvalidArguments;
-        if (kind == .profile) {
-            const profile_name = args.next() orelse return error.InvalidArguments;
-            profile = parse_profile_arg(profile_name) orelse return error.InvalidArguments;
-            continue;
+    var arg_index: usize = 1;
+    while (arg_index < arg_count) : (arg_index += 1) {
+        const kind = cli_arg_kind(argv[arg_index]);
+        switch (kind) {
+            .unknown => return error.InvalidArguments,
+            .profile => {
+                arg_index += 1;
+                if (arg_index >= arg_count) return error.InvalidArguments;
+                profile = parse_profile_arg(argv[arg_index]) orelse return error.InvalidArguments;
+            },
+            .positional => {
+                target_path = try parse_positional_arg(target_path, argv[arg_index]);
+            },
+            .dump_graph, .explain_policy, .explain_strict => {
+                option_flags |= cli_flag_bit(kind);
+            },
         }
-
-        if (kind == .positional) {
-            target_path = try parse_positional_arg(target_path, arg);
-            continue;
-        }
-
-        option_flags |= cli_flag_bit(kind);
     }
 
-    if (target_path == null) return error.InvalidArguments;
-    const resolved_target = target_path.?;
-    if (resolved_target.len == 0) {
-        return error.InvalidArguments;
-    }
+    const resolved_target = target_path orelse return error.InvalidArguments;
     assert(std.mem.indexOfScalar(u8, resolved_target, 0) == null);
 
     return .{
@@ -222,10 +222,10 @@ fn parse_cli_options(init: std.process.Init) !CliOptions {
     };
 }
 
-fn parse_profile_arg(profile_name: []const u8) ?libtiger.policy.Profile {
+fn parse_profile_arg(profile_name: []const u8) ?libtigercheck.policy.Profile {
     assert(profile_name.len > 0);
     if (profile_name.len == 0) return null;
-    return libtiger.policy.parse_profile_name(profile_name);
+    return libtigercheck.policy.parse_profile_name(profile_name);
 }
 
 fn parse_positional_arg(target_path: ?[]const u8, arg: []const u8) !?[]const u8 {
@@ -268,7 +268,7 @@ fn cli_arg_kind(arg: []const u8) CliArgKind {
 fn print_strict_explanation(
     allocator: std.mem.Allocator,
     stdout: *std.Io.Writer,
-    result: libtiger.analysis.Result,
+    result: libtigercheck.analysis.Result,
 ) !void {
     assert(result.diagnostics.items.len == result.warning_count + result.critical_count);
     assert(result.warning_count + result.critical_count <= 4096);
@@ -324,7 +324,7 @@ fn strict_rewrite(rule_id: rules.Id) []const u8 {
     };
 }
 
-fn print_policy_explanation(stdout: *std.Io.Writer, result: libtiger.analysis.Result) !void {
+fn print_policy_explanation(stdout: *std.Io.Writer, result: libtigercheck.analysis.Result) !void {
     assert(result.policy_profile.len > 0 or !result.policy_applied);
     if (!result.policy_applied) {
         try stdout.writeAll("\nPolicy explanation: policy was not applied\n");
@@ -343,14 +343,14 @@ fn print_policy_explanation(stdout: *std.Io.Writer, result: libtiger.analysis.Re
 }
 
 fn collect_policy_histograms(
-    result: libtiger.analysis.Result,
+    result: libtigercheck.analysis.Result,
 ) struct {
-    std.enums.EnumArray(libtiger.policy.CodeClass, u32),
-    std.enums.EnumArray(libtiger.policy.Action, u32),
+    std.enums.EnumArray(libtigercheck.policy.CodeClass, u32),
+    std.enums.EnumArray(libtigercheck.policy.Action, u32),
 } {
     assert(result.diagnostics.items.len == result.warning_count + result.critical_count);
-    var class_counts = std.enums.EnumArray(libtiger.policy.CodeClass, u32).initFill(0);
-    var action_counts = std.enums.EnumArray(libtiger.policy.Action, u32).initFill(0);
+    var class_counts = std.enums.EnumArray(libtigercheck.policy.CodeClass, u32).initFill(0);
+    var action_counts = std.enums.EnumArray(libtigercheck.policy.Action, u32).initFill(0);
 
     for (result.diagnostics.items) |diag| {
         if (diag.effective_class) |class| {
@@ -366,9 +366,9 @@ fn collect_policy_histograms(
 
 fn print_policy_class_histogram(
     stdout: *std.Io.Writer,
-    counts: std.enums.EnumArray(libtiger.policy.CodeClass, u32),
+    counts: std.enums.EnumArray(libtigercheck.policy.CodeClass, u32),
 ) !void {
-    const classes = [_]libtiger.policy.CodeClass{
+    const classes = [_]libtigercheck.policy.CodeClass{
         .runtime,
         .test_or_fuzz,
         .tooling,
@@ -386,9 +386,9 @@ fn print_policy_class_histogram(
 
 fn print_policy_action_histogram(
     stdout: *std.Io.Writer,
-    counts: std.enums.EnumArray(libtiger.policy.Action, u32),
+    counts: std.enums.EnumArray(libtigercheck.policy.Action, u32),
 ) !void {
-    const actions = [_]libtiger.policy.Action{ .enforce, .warn, .off };
+    const actions = [_]libtigercheck.policy.Action{ .enforce, .warn, .off };
     try stdout.writeAll("Effective action histogram:\n");
     for (actions) |action| {
         try stdout.print(
@@ -398,7 +398,7 @@ fn print_policy_action_histogram(
     }
 }
 
-fn code_class_name(class: libtiger.policy.CodeClass) []const u8 {
+fn code_class_name(class: libtigercheck.policy.CodeClass) []const u8 {
     return switch (class) {
         .runtime => "runtime",
         .test_or_fuzz => "test_or_fuzz",
@@ -408,7 +408,7 @@ fn code_class_name(class: libtiger.policy.CodeClass) []const u8 {
     };
 }
 
-fn policy_action_name(action: libtiger.policy.Action) []const u8 {
+fn policy_action_name(action: libtigercheck.policy.Action) []const u8 {
     return switch (action) {
         .enforce => "enforce",
         .warn => "warn",
@@ -419,7 +419,7 @@ fn policy_action_name(action: libtiger.policy.Action) []const u8 {
 fn print_diagnostic(
     stdout: *std.Io.Writer,
     location_cache: *LocationCache,
-    diag: libtiger.analysis.Diagnostic,
+    diag: libtigercheck.analysis.Diagnostic,
 ) !void {
     assert(diag.file_path.len > 0);
     assert(diag.message.len > 0);
@@ -492,7 +492,7 @@ fn offset_to_line_col(source: []const u8, offset: u32) SourceLocation {
 fn print_issue_histograms(
     allocator: std.mem.Allocator,
     stdout: *std.Io.Writer,
-    result: libtiger.analysis.Result,
+    result: libtigercheck.analysis.Result,
 ) !void {
     assert(result.diagnostics.items.len == result.warning_count + result.critical_count);
     assert(result.warning_count + result.critical_count <= 4096);
@@ -616,7 +616,7 @@ test "all rule IDs are documented" {
 
 test "histogram output snapshot" {
     const allocator = std.testing.allocator;
-    var result = libtiger.analysis.Result.init(allocator);
+    var result = libtigercheck.analysis.Result.init(allocator);
     defer result.deinit();
 
     try result.diagnostics.append(.{
@@ -656,7 +656,7 @@ test "diagnostic line snapshot" {
     var cache = LocationCache.init(allocator);
     defer cache.deinit();
 
-    const diag = libtiger.analysis.Diagnostic{
+    const diag = libtigercheck.analysis.Diagnostic{
         .severity = .warning,
         .rule_id = .TS16_EXPLICIT_OPTIONS,
         .file_path = "tests/corpus/tigerstyle/fail_TS16_explicit_options.zig",

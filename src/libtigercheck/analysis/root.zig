@@ -4034,8 +4034,8 @@ fn is_tigerbeetle_stdx_copy_impl_file(file_path: []const u8) bool {
 fn is_self_analysis_source_file(file_path: []const u8) bool {
     assert(file_path.len > 0);
     if (file_path.len == 0) return false;
-    return std.mem.indexOf(u8, file_path, "/src/libtiger/analysis/") != null or
-        std.mem.startsWith(u8, file_path, "src/libtiger/analysis/");
+    return std.mem.indexOf(u8, file_path, "/src/libtigercheck/analysis/") != null or
+        std.mem.startsWith(u8, file_path, "src/libtigercheck/analysis/");
 }
 
 fn is_literal_true(tree: *const std.zig.Ast, node: std.zig.Ast.Node.Index) bool {

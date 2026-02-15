@@ -19,8 +19,8 @@ pub fn build(b: *std.Build) void {
         "Perf budget for check-strict/bench (ms)",
     ) orelse default_perf_budget_ms;
 
-    const libtiger_module = b.createModule(.{
-        .root_source_file = b.path("src/libtiger/libtiger.zig"),
+    const libtigercheck_module = b.createModule(.{
+        .root_source_file = b.path("src/libtigercheck/libtigercheck.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -33,7 +33,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
-    exe.root_module.addImport("libtiger", libtiger_module);
+    exe.root_module.addImport("libtigercheck", libtigercheck_module);
     b.installArtifact(exe);
 
     const run_cmd = b.addRunArtifact(exe);
@@ -76,7 +76,7 @@ pub fn build(b: *std.Build) void {
 
     const lib_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/libtiger/libtiger.zig"),
+            .root_source_file = b.path("src/libtigercheck/libtigercheck.zig"),
             .target = target,
             .optimize = optimize,
         }),
@@ -90,7 +90,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
-    exe_tests.root_module.addImport("libtiger", libtiger_module);
+    exe_tests.root_module.addImport("libtigercheck", libtigercheck_module);
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
     const test_step = b.step("test", "Run all tests");
@@ -119,7 +119,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
-    corpus_audit.root_module.addImport("libtiger", libtiger_module);
+    corpus_audit.root_module.addImport("libtigercheck", libtigercheck_module);
 
     const run_corpus_audit = b.addRunArtifact(corpus_audit);
     run_corpus_audit.addArg("tests/corpus");
@@ -135,7 +135,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
-    precision_harness.root_module.addImport("libtiger", libtiger_module);
+    precision_harness.root_module.addImport("libtigercheck", libtigercheck_module);
 
     const precision_check_cmd = b.addRunArtifact(precision_harness);
     precision_check_cmd.addFileArg(exe.getEmittedBin());
@@ -159,4 +159,32 @@ pub fn build(b: *std.Build) void {
         "Generate precision baseline from current corpus",
     );
     precision_write_step.dependOn(&precision_write_cmd.step);
+
+    const release_exe = b.addExecutable(.{
+        .name = "release",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tools/release.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const run_release = b.addRunArtifact(release_exe);
+    run_release.addArg("release");
+    if (b.args) |args| {
+        run_release.addArgs(args);
+    }
+    const release_step = b.step("release", "Run release automation flow");
+    release_step.dependOn(&run_release.step);
+
+    const run_release_validate = b.addRunArtifact(release_exe);
+    run_release_validate.addArg("validate");
+    if (b.args) |args| {
+        run_release_validate.addArgs(args);
+    }
+    const release_validate_step = b.step(
+        "release-validate",
+        "Run release validation automation flow",
+    );
+    release_validate_step.dependOn(&run_release_validate.step);
 }

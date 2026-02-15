@@ -1,7 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const libtiger = @import("libtiger");
-const rules = libtiger.rules;
+const libtigercheck = @import("libtigercheck");
+const rules = libtigercheck.rules;
 const corpus_common = @import("corpus_common.zig");
 
 const rule_count: usize = @typeInfo(rules.Id).@"enum".fields.len;

@@ -1,0 +1,27 @@
+name: "Release (validate)"
+permissions: {}
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows: ["Release"]
+    types:
+      - completed
+
+  schedule:
+    - cron: 0 */6 * * *
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    if: ${{ !(github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: release
+          fetch-depth: 0
+
+      - run: ./zig/download.sh
+      - run: ./zig/zig build release-validate
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
