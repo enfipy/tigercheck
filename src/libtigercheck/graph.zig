@@ -657,7 +657,7 @@ fn collect_zig_files(
     }
 
     const io = std.Options.debug_io;
-    var dir = try std.Io.Dir.cwd().openDir(io, root_path, .{});
+    var dir = try std.Io.Dir.cwd().openDir(io, root_path, .{ .iterate = true });
     defer dir.close(io);
 
     var iter = dir.iterate();

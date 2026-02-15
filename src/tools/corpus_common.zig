@@ -131,7 +131,7 @@ pub fn collect_zig_files(
     }
 
     const io = std.Options.debug_io;
-    var dir = std.Io.Dir.cwd().openDir(io, root_path, .{}) catch |err| {
+    var dir = std.Io.Dir.cwd().openDir(io, root_path, .{ .iterate = true }) catch |err| {
         std.debug.print("corpus-common: cannot open directory '{s}': {}\n", .{ root_path, err });
         return err;
     };
