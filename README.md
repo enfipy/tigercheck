@@ -52,6 +52,12 @@ Diagnostic shape:
         rewrite: clamp bound with explicit max and assert the cap
 ```
 
+Machine-readable output:
+
+```bash
+./zig/zig build run -- --format json ./src
+```
+
 ## Unified Rule Catalog
 
 CLI diagnostics use the IDs below. This is the canonical catalog for NASA, TigerStyle, and TigerBeetle checks.

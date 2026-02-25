@@ -9,12 +9,51 @@ const HistogramEntry = struct {
     count: HistogramCount,
 };
 
+const OutputFormat = enum {
+    text,
+    json,
+};
+
 const CliOptions = struct {
     dump_graph: bool,
     explain_policy: bool,
     explain_strict: bool,
+    output_format: OutputFormat,
     profile: libtigercheck.policy.Profile,
     target_path: []const u8,
+};
+
+const JsonDiagnostic = struct {
+    severity: libtigercheck.analysis.Severity,
+    rule_id: []const u8,
+    summary: []const u8,
+    file_path: []const u8,
+    message: []const u8,
+    line: ?u32,
+    column: ?u32,
+    hint: ?[]const u8,
+    effective_class: ?libtigercheck.policy.CodeClass,
+    effective_action: ?libtigercheck.policy.Action,
+};
+
+const JsonRunOutput = struct {
+    schema_version: u32,
+    policy_profile: []const u8,
+    policy_applied: bool,
+    warning_count: usize,
+    critical_count: usize,
+    suppressed_count: usize,
+    downgraded_count: usize,
+    diagnostics: []const JsonDiagnostic,
+};
+
+const OwnedJsonRunOutput = struct {
+    diagnostics: std.array_list.Managed(JsonDiagnostic),
+    value: JsonRunOutput,
+
+    fn deinit(self: *OwnedJsonRunOutput) void {
+        self.diagnostics.deinit();
+    }
 };
 
 const SourceLocation = struct {
@@ -142,6 +181,15 @@ pub fn main(init: std.process.Init) !void {
     var location_cache = LocationCache.init(allocator);
     defer location_cache.deinit();
 
+    if (cli.output_format == .json) {
+        try print_json_run_output(allocator, stdout, &location_cache, result);
+        try stdout.flush();
+        if (result.critical_count > 0 or result.warning_count > 0) {
+            std.process.exit(1);
+        }
+        return;
+    }
+
     for (result.diagnostics.items) |diag| {
         try print_diagnostic(stdout, &location_cache, diag);
     }
@@ -175,6 +223,7 @@ fn print_usage() void {
     std.debug.print(
         "usage: tigercheck [--dump-graph] [--explain-policy] " ++
             "[--explain-strict] " ++
+            "[--format text|json] " ++
             "[--profile strict_core|tigerbeetle_repo] <path>\n",
         .{},
     );
@@ -189,6 +238,7 @@ fn parse_cli_options(init: std.process.Init) !CliOptions {
 
     var option_flags: u8 = 0;
     var profile: libtigercheck.policy.Profile = .strict_core;
+    var output_format: OutputFormat = .text;
     var target_path: ?[]const u8 = null;
 
     var arg_index: usize = 1;
@@ -200,6 +250,12 @@ fn parse_cli_options(init: std.process.Init) !CliOptions {
                 arg_index += 1;
                 if (arg_index >= arg_count) return error.InvalidArguments;
                 profile = parse_profile_arg(argv[arg_index]) orelse return error.InvalidArguments;
+            },
+            .format => {
+                arg_index += 1;
+                if (arg_index >= arg_count) return error.InvalidArguments;
+                output_format = parse_output_format_arg(argv[arg_index]) orelse
+                    return error.InvalidArguments;
             },
             .positional => {
                 target_path = try parse_positional_arg(target_path, argv[arg_index]);
@@ -217,6 +273,7 @@ fn parse_cli_options(init: std.process.Init) !CliOptions {
         .dump_graph = (option_flags & (1 << 0)) != 0,
         .explain_policy = (option_flags & (1 << 1)) != 0,
         .explain_strict = (option_flags & (1 << 2)) != 0,
+        .output_format = output_format,
         .profile = profile,
         .target_path = resolved_target,
     };
@@ -226,6 +283,14 @@ fn parse_profile_arg(profile_name: []const u8) ?libtigercheck.policy.Profile {
     assert(profile_name.len > 0);
     if (profile_name.len == 0) return null;
     return libtigercheck.policy.parse_profile_name(profile_name);
+}
+
+fn parse_output_format_arg(value: []const u8) ?OutputFormat {
+    assert(value.len > 0);
+    if (value.len == 0) return null;
+    if (std.mem.eql(u8, value, "text")) return .text;
+    if (std.mem.eql(u8, value, "json")) return .json;
+    return null;
 }
 
 fn parse_positional_arg(target_path: ?[]const u8, arg: []const u8) !?[]const u8 {
@@ -240,7 +305,7 @@ fn cli_flag_bit(kind: CliArgKind) u8 {
         .dump_graph => 1 << 0,
         .explain_policy => 1 << 1,
         .explain_strict => 1 << 2,
-        .profile, .positional, .unknown => 0,
+        .format, .profile, .positional, .unknown => 0,
     };
 }
 
@@ -248,6 +313,7 @@ const CliArgKind = enum {
     dump_graph,
     explain_policy,
     explain_strict,
+    format,
     profile,
     positional,
     unknown,
@@ -260,6 +326,7 @@ fn cli_arg_kind(arg: []const u8) CliArgKind {
     if (std.mem.eql(u8, arg, "--dump-graph")) return .dump_graph;
     if (std.mem.eql(u8, arg, "--explain-policy")) return .explain_policy;
     if (std.mem.eql(u8, arg, "--explain-strict")) return .explain_strict;
+    if (std.mem.eql(u8, arg, "--format")) return .format;
     if (std.mem.eql(u8, arg, "--profile")) return .profile;
     if (std.mem.startsWith(u8, arg, "--")) return .unknown;
     return .positional;
@@ -430,37 +497,15 @@ fn print_diagnostic(
 
     const id = rules.id_string(diag.rule_id);
     const requirement = rules.summary(diag.rule_id);
-    if (diag.line) |line| {
-        const column = diag.column orelse 1;
+    if (resolved_diagnostic_location(location_cache, diag)) |loc| {
         try stdout.print(
             "[{s}] {s}:{d}:{d} [{s}] {s}; {s}\n",
-            .{ severity_str, diag.file_path, line, column, id, requirement, diag.message },
+            .{ severity_str, diag.file_path, loc.line, loc.column, id, requirement, diag.message },
         );
         if (diag.hint) |hint| {
             try stdout.print("        rewrite: {s}\n", .{hint});
         }
         return;
-    }
-
-    if (extract_subject(diag.message)) |subject| {
-        if (location_cache.function_location(diag.file_path, subject)) |loc| {
-            try stdout.print(
-                "[{s}] {s}:{d}:{d} [{s}] {s}; {s}\n",
-                .{
-                    severity_str,
-                    diag.file_path,
-                    loc.line,
-                    loc.column,
-                    id,
-                    requirement,
-                    diag.message,
-                },
-            );
-            if (diag.hint) |hint| {
-                try stdout.print("        rewrite: {s}\n", .{hint});
-            }
-            return;
-        }
     }
 
     try stdout.print(
@@ -470,6 +515,74 @@ fn print_diagnostic(
     if (diag.hint) |hint| {
         try stdout.print("        rewrite: {s}\n", .{hint});
     }
+}
+
+fn resolved_diagnostic_location(
+    location_cache: *LocationCache,
+    diag: libtigercheck.analysis.Diagnostic,
+) ?SourceLocation {
+    if (diag.line) |line| {
+        return .{ .line = line, .column = diag.column orelse 1 };
+    }
+    if (extract_subject(diag.message)) |subject| {
+        return location_cache.function_location(diag.file_path, subject);
+    }
+    return null;
+}
+
+fn print_json_run_output(
+    allocator: std.mem.Allocator,
+    stdout: *std.Io.Writer,
+    location_cache: *LocationCache,
+    result: libtigercheck.analysis.Result,
+) !void {
+    var owned = try build_json_run_output(allocator, location_cache, result);
+    defer owned.deinit();
+
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+    try std.json.Stringify.value(owned.value, .{ .whitespace = .indent_2 }, &out.writer);
+    try out.writer.writeAll("\n");
+    try stdout.writeAll(out.written());
+}
+
+fn build_json_run_output(
+    allocator: std.mem.Allocator,
+    location_cache: *LocationCache,
+    result: libtigercheck.analysis.Result,
+) !OwnedJsonRunOutput {
+    var diagnostics = std.array_list.Managed(JsonDiagnostic).init(allocator);
+    errdefer diagnostics.deinit();
+
+    for (result.diagnostics.items) |diag| {
+        const loc = resolved_diagnostic_location(location_cache, diag);
+        try diagnostics.append(.{
+            .severity = diag.severity,
+            .rule_id = rules.id_string(diag.rule_id),
+            .summary = rules.summary(diag.rule_id),
+            .file_path = diag.file_path,
+            .message = diag.message,
+            .line = if (loc) |v| v.line else null,
+            .column = if (loc) |v| v.column else null,
+            .hint = diag.hint,
+            .effective_class = diag.effective_class,
+            .effective_action = diag.effective_action,
+        });
+    }
+
+    return .{
+        .diagnostics = diagnostics,
+        .value = .{
+            .schema_version = 1,
+            .policy_profile = result.policy_profile,
+            .policy_applied = result.policy_applied,
+            .warning_count = result.warning_count,
+            .critical_count = result.critical_count,
+            .suppressed_count = result.suppressed_count,
+            .downgraded_count = result.downgraded_count,
+            .diagnostics = diagnostics.items,
+        },
+    };
 }
 
 fn offset_to_line_col(source: []const u8, offset: u32) SourceLocation {
@@ -673,5 +786,12 @@ test "diagnostic line snapshot" {
 
 test "cli arg kind rejects unknown flags" {
     try std.testing.expectEqual(CliArgKind.unknown, cli_arg_kind("--unknownz"));
+    try std.testing.expectEqual(CliArgKind.format, cli_arg_kind("--format"));
     try std.testing.expectEqual(CliArgKind.positional, cli_arg_kind("src"));
+}
+
+test "parse output format arg" {
+    try std.testing.expectEqual(OutputFormat.text, parse_output_format_arg("text").?);
+    try std.testing.expectEqual(OutputFormat.json, parse_output_format_arg("json").?);
+    try std.testing.expect(parse_output_format_arg("yaml") == null);
 }

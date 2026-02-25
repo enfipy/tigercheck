@@ -11,6 +11,7 @@ const ast_walk = @import("../ast_walk.zig");
 const call_expr = @import("call_expr.zig");
 const roles = @import("roles.zig");
 const pedantic = @import("pedantic.zig");
+const diagnostics = @import("diagnostics.zig");
 const event_pacing = @import("event_pacing.zig");
 const control_data_boundary = @import("control_data_boundary.zig");
 const queue_growth_bounds = @import("queue_growth_bounds.zig");
@@ -60,48 +61,9 @@ const TypeVisitState = struct {
     len: u8 = 0,
 };
 
-pub const Severity = enum {
-    warning,
-    critical,
-};
-
-pub const Diagnostic = struct {
-    severity: Severity,
-    rule_id: rules.Id,
-    file_path: []const u8,
-    message: []const u8,
-    line: ?u32 = null,
-    column: ?u32 = null,
-    hint: ?[]const u8 = null,
-    effective_class: ?policy.CodeClass = null,
-    effective_action: ?policy.Action = null,
-};
-
-pub const Result = struct {
-    diagnostics: std.array_list.Managed(Diagnostic),
-    critical_count: usize,
-    warning_count: usize,
-    policy_profile: []const u8,
-    suppressed_count: usize,
-    downgraded_count: usize,
-    policy_applied: bool,
-
-    pub fn init(allocator: std.mem.Allocator) Result {
-        return .{
-            .diagnostics = std.array_list.Managed(Diagnostic).init(allocator),
-            .critical_count = 0,
-            .warning_count = 0,
-            .policy_profile = "",
-            .suppressed_count = 0,
-            .downgraded_count = 0,
-            .policy_applied = false,
-        };
-    }
-
-    pub fn deinit(self: *Result) void {
-        self.diagnostics.deinit();
-    }
-};
+pub const Severity = diagnostics.Severity;
+pub const Diagnostic = diagnostics.Diagnostic;
+pub const Result = diagnostics.Result;
 
 pub const AnalyzeOptions = struct {
     profile: policy.Profile = .strict_core,
@@ -140,8 +102,8 @@ pub fn analyze_with_options(
     var runtime_files = std.StringHashMap(void).init(allocator);
     defer runtime_files.deinit();
     try collect_runtime_files(&runtime_files, &red);
-
     try detect_recursion(allocator, call_graph, &result);
+
     const quality_options = AnalyzeOptions{
         .profile = options.profile,
         .r4_max_function_lines = max_function_lines,
@@ -156,6 +118,7 @@ pub fn analyze_with_options(
         &red,
         &result,
     );
+
     try apply_diagnostic_precedence_and_dedup(&result);
     try apply_profile_policy(active_policy, &runtime_files, &result);
     try append_pedantic_pipeline_diagnostics(allocator, &result);
@@ -204,89 +167,7 @@ fn first_warning_file_path(result: *const Result) ?[]const u8 {
 }
 
 fn apply_diagnostic_precedence_and_dedup(result: *Result) !void {
-    assert(result.diagnostics.items.len == result.warning_count + result.critical_count);
-    sort_diagnostics_by_precedence(result);
-
-    var filtered = std.array_list.Managed(Diagnostic).init(result.diagnostics.allocator);
-    errdefer filtered.deinit();
-
-    var warning_count: usize = 0;
-    var critical_count: usize = 0;
-
-    for (result.diagnostics.items) |diag| {
-        if (has_exact_diagnostic_already_reported(filtered.items, diag)) {
-            continue;
-        }
-        try filtered.append(diag);
-        if (diag.severity == .critical) {
-            critical_count += 1;
-        } else {
-            warning_count += 1;
-        }
-    }
-
-    result.diagnostics.deinit();
-    result.diagnostics = filtered;
-    result.warning_count = warning_count;
-    result.critical_count = critical_count;
-}
-
-fn sort_diagnostics_by_precedence(result: *Result) void {
-    std.mem.sort(Diagnostic, result.diagnostics.items, {}, struct {
-        fn lt(_: void, lhs: Diagnostic, rhs: Diagnostic) bool {
-            if (lhs.severity != rhs.severity) {
-                return lhs.severity == .critical;
-            }
-            const lhs_rule = @intFromEnum(lhs.rule_id);
-            const rhs_rule = @intFromEnum(rhs.rule_id);
-            if (lhs_rule != rhs_rule) {
-                return lhs_rule < rhs_rule;
-            }
-            const file_order = std.mem.order(u8, lhs.file_path, rhs.file_path);
-            if (file_order != .eq) {
-                return file_order == .lt;
-            }
-            const lhs_line = lhs.line orelse 0;
-            const rhs_line = rhs.line orelse 0;
-            if (lhs_line != rhs_line) {
-                return lhs_line < rhs_line;
-            }
-            const lhs_column = lhs.column orelse 0;
-            const rhs_column = rhs.column orelse 0;
-            if (lhs_column != rhs_column) {
-                return lhs_column < rhs_column;
-            }
-            return std.mem.order(u8, lhs.message, rhs.message) == .lt;
-        }
-    }.lt);
-}
-
-fn has_exact_diagnostic_already_reported(
-    existing: []const Diagnostic,
-    candidate: Diagnostic,
-) bool {
-    assert(existing.len <= 4096);
-    assert(candidate.file_path.len > 0);
-    if (existing.len == 0) return false;
-    if (candidate.file_path.len == 0) return false;
-    for (existing) |diag| {
-        if (diag_exact_match(diag, candidate)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-fn diag_exact_match(lhs: Diagnostic, rhs: Diagnostic) bool {
-    assert(lhs.file_path.len > 0);
-    assert(rhs.file_path.len > 0);
-    if (lhs.file_path.len == 0 or rhs.file_path.len == 0) return false;
-    if (lhs.severity != rhs.severity) return false;
-    if (lhs.rule_id != rhs.rule_id) return false;
-    if (!std.mem.eql(u8, lhs.file_path, rhs.file_path)) return false;
-    if (lhs.line != rhs.line) return false;
-    if (lhs.column != rhs.column) return false;
-    return std.mem.eql(u8, lhs.message, rhs.message);
+    try diagnostics.apply_precedence_and_dedup(result);
 }
 
 fn append_diag(
@@ -298,27 +179,9 @@ fn append_diag(
 ) !void {
     assert(file_path.len > 0);
     assert(message.len > 0);
-    assert(result.diagnostics.items.len == result.warning_count + result.critical_count);
     if (file_path.len == 0) return;
     if (message.len == 0) return;
-    for (result.diagnostics.items) |existing| {
-        if (diag_is_exact_match(existing, severity, rule_id, file_path, message, null, null)) {
-            return;
-        }
-    }
-
-    try result.diagnostics.append(.{
-        .severity = severity,
-        .rule_id = rule_id,
-        .file_path = file_path,
-        .message = message,
-        .hint = default_hint_for_rule(rule_id),
-    });
-    if (severity == .critical) {
-        result.critical_count += 1;
-    } else {
-        result.warning_count += 1;
-    }
+    try diagnostics.append(result, severity, rule_id, file_path, message, .{});
 }
 
 fn append_diag_pair(
@@ -334,41 +197,15 @@ fn append_diag_pair(
     if (file_path.len == 0) return;
     if (message.len == 0) return;
     if (first_rule_id == second_rule_id) return;
-    try append_diag(result, severity, first_rule_id, file_path, message);
-    try append_diag(result, severity, second_rule_id, file_path, message);
-}
-
-fn diag_is_exact_match(
-    existing: Diagnostic,
-    severity: Severity,
-    rule_id: rules.Id,
-    file_path: []const u8,
-    message: []const u8,
-    line: ?u32,
-    column: ?u32,
-) bool {
-    assert(file_path.len > 0);
-    assert(message.len > 0);
-    if (file_path.len == 0) return false;
-    if (message.len == 0) return false;
-    if (existing.severity != severity) return false;
-    if (existing.rule_id != rule_id) return false;
-    if (!std.mem.eql(u8, existing.file_path, file_path)) return false;
-    if (existing.line != line) return false;
-    if (existing.column != column) return false;
-    return std.mem.eql(u8, existing.message, message);
-}
-
-fn default_hint_for_rule(rule_id: rules.Id) ?[]const u8 {
-    return switch (rule_id) {
-        .N02_BOUNDED_LOOPS,
-        .TS02_EXPLICIT_BOUNDS,
-        .N03_STATIC_MEMORY,
-        .TS07_MEMORY_PHASE,
-        .TS12_PLANE_BOUNDARY,
-        => rules.rewrite_hint(rule_id),
-        else => null,
-    };
+    try diagnostics.append_pair(
+        result,
+        severity,
+        first_rule_id,
+        second_rule_id,
+        file_path,
+        message,
+        .{},
+    );
 }
 
 fn seed_green_and_red(

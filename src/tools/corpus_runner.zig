@@ -18,6 +18,16 @@ const ExpectationDirectives = struct {
     message_substring: ?[]const u8 = null,
 };
 
+const JsonDiagnostic = struct {
+    rule_id: []const u8,
+    message: []const u8,
+};
+
+const JsonRunOutput = struct {
+    schema_version: u32,
+    diagnostics: []const JsonDiagnostic,
+};
+
 const TestObservation = struct {
     expected_prefixes: ExpectedRulePrefixes,
     expected_rule_seen: bool,
@@ -92,6 +102,8 @@ fn process_test_file(
     var argv = std.array_list.Managed([]const u8).init(allocator);
     defer argv.deinit();
     try argv.append(tiger_check_bin);
+    try argv.append("--format");
+    try argv.append("json");
     if (profile_for_test_file(file_path)) |profile_name| {
         try argv.append("--profile");
         try argv.append(profile_name);
@@ -110,6 +122,21 @@ fn process_test_file(
         allocator.free(result.stderr);
     }
 
+    const parsed_output = std.json.parseFromSlice(
+        JsonRunOutput,
+        allocator,
+        result.stdout,
+        .{ .allocate = .alloc_always, .ignore_unknown_fields = true },
+    ) catch |err| {
+        try stdout.print(
+            "  ERROR {s}: invalid tigercheck JSON output: {}\n",
+            .{ basename, err },
+        );
+        stats.errs += 1;
+        return;
+    };
+    defer parsed_output.deinit();
+
     const directives = try parse_expectation_directives(allocator, file_path);
     defer {
         if (directives.rule_id) |rule_id| allocator.free(rule_id);
@@ -119,8 +146,7 @@ fn process_test_file(
     const observation = observe_test_result(
         basename,
         expect_pass,
-        result.stdout,
-        result.stderr,
+        parsed_output.value.diagnostics,
         result.term,
         directives,
     );
@@ -160,8 +186,7 @@ fn profile_for_test_file(file_path: []const u8) ?[]const u8 {
 fn observe_test_result(
     basename: []const u8,
     expect_pass: bool,
-    stdout_bytes: []const u8,
-    stderr_bytes: []const u8,
+    diagnostics: []const JsonDiagnostic,
     term: std.process.Child.Term,
     directives: ExpectationDirectives,
 ) TestObservation {
@@ -177,14 +202,12 @@ fn observe_test_result(
     }
     const expected_prefixes = expected_rule_prefixes_for_fail_case(basename);
     const expected_rule_seen = expected_output_matches_expectation(
-        stdout_bytes,
-        stderr_bytes,
+        diagnostics,
         expected_prefixes,
         directives.rule_id,
     );
     const expected_message_seen = expected_output_matches_message(
-        stdout_bytes,
-        stderr_bytes,
+        diagnostics,
         directives.message_substring,
     );
     const exited_ok = switch (term) {
@@ -348,66 +371,59 @@ fn parse_expectation_directive_line(
 }
 
 fn expected_output_matches_expectation(
-    stdout_bytes: []const u8,
-    stderr_bytes: []const u8,
+    diagnostics: []const JsonDiagnostic,
     expected_prefixes: ExpectedRulePrefixes,
     direct_rule_id: ?[]const u8,
 ) bool {
-    assert(stdout_bytes.len <= std.math.maxInt(u32));
-    assert(stderr_bytes.len <= std.math.maxInt(u32));
     if (direct_rule_id) |rule_id| {
         if (rule_id.len == 0) return false;
-        return output_mentions_rule_id(stdout_bytes, stderr_bytes, rule_id);
+        return diagnostics_mention_rule_id(diagnostics, rule_id);
     }
-    return expected_output_matches_rule_prefixes(stdout_bytes, stderr_bytes, expected_prefixes);
+    return expected_output_matches_rule_prefixes(diagnostics, expected_prefixes);
 }
 
 fn expected_output_matches_message(
-    stdout_bytes: []const u8,
-    stderr_bytes: []const u8,
+    diagnostics: []const JsonDiagnostic,
     message_substring: ?[]const u8,
 ) bool {
-    assert(stdout_bytes.len <= std.math.maxInt(u32));
-    assert(stderr_bytes.len <= std.math.maxInt(u32));
     const expected = message_substring orelse return true;
     if (expected.len == 0) return false;
-    return std.mem.indexOf(u8, stdout_bytes, expected) != null or
-        std.mem.indexOf(u8, stderr_bytes, expected) != null;
-}
-
-fn expected_output_matches_rule_prefixes(
-    stdout_bytes: []const u8,
-    stderr_bytes: []const u8,
-    expected: ExpectedRulePrefixes,
-) bool {
-    assert(stdout_bytes.len <= std.math.maxInt(u32));
-    assert(stderr_bytes.len <= std.math.maxInt(u32));
-    if (stdout_bytes.len == 0 and stderr_bytes.len == 0) {
-        return expected.primary == null;
-    }
-    const primary = expected.primary orelse return true;
-    if (output_mentions_rule_prefix(stdout_bytes, stderr_bytes, primary)) {
-        return true;
-    }
-    if (expected.fallback) |fallback| {
-        if (output_mentions_rule_prefix(stdout_bytes, stderr_bytes, fallback)) {
+    for (diagnostics) |diag| {
+        if (std.mem.indexOf(u8, diag.message, expected) != null) {
             return true;
         }
     }
     return false;
 }
 
-fn output_mentions_rule_id(
-    stdout_bytes: []const u8,
-    stderr_bytes: []const u8,
-    rule_id: []const u8,
+fn expected_output_matches_rule_prefixes(
+    diagnostics: []const JsonDiagnostic,
+    expected: ExpectedRulePrefixes,
 ) bool {
+    if (diagnostics.len == 0) {
+        return expected.primary == null;
+    }
+    const primary = expected.primary orelse return true;
+    if (diagnostics_mention_rule_prefix(diagnostics, primary)) {
+        return true;
+    }
+    if (expected.fallback) |fallback| {
+        if (diagnostics_mention_rule_prefix(diagnostics, fallback)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+fn diagnostics_mention_rule_id(diagnostics: []const JsonDiagnostic, rule_id: []const u8) bool {
     assert(rule_id.len > 0);
     if (rule_id.len == 0) return false;
-    var needle_buf: [64]u8 = undefined;
-    const needle = std.fmt.bufPrint(&needle_buf, "[{s}]", .{rule_id}) catch return false;
-    return std.mem.indexOf(u8, stdout_bytes, needle) != null or
-        std.mem.indexOf(u8, stderr_bytes, needle) != null;
+    for (diagnostics) |diag| {
+        if (std.mem.eql(u8, diag.rule_id, rule_id)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 fn print_expected_rule_expectation(
@@ -445,17 +461,16 @@ fn print_expected_rule_expectation(
     );
 }
 
-fn output_mentions_rule_prefix(
-    stdout_bytes: []const u8,
-    stderr_bytes: []const u8,
-    prefix: []const u8,
-) bool {
+fn diagnostics_mention_rule_prefix(diagnostics: []const JsonDiagnostic, prefix: []const u8) bool {
     assert(prefix.len > 0);
     if (prefix.len == 0) return false;
-    var needle_buf: [32]u8 = undefined;
-    const needle = std.fmt.bufPrint(&needle_buf, "[{s}_", .{prefix}) catch return false;
-    return std.mem.indexOf(u8, stdout_bytes, needle) != null or
-        std.mem.indexOf(u8, stderr_bytes, needle) != null;
+    for (diagnostics) |diag| {
+        const sep = std.mem.indexOfScalar(u8, diag.rule_id, '_') orelse continue;
+        if (std.mem.eql(u8, diag.rule_id[0..sep], prefix)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 fn fatal(msg: []const u8) noreturn {
