@@ -1,0 +1,22 @@
+.{
+    .name = .tigercheck_example,
+    .version = "0.0.0",
+    .paths = .{
+        ".",
+    },
+    .dependencies = .{
+        .tigercheck_x86_64_linux = .{
+            .url = "https://github.com/enfipy/tigercheck/releases/download/0.1.0/tigercheck-x86_64-linux.zip",
+            .hash = "N-V-__8AAIhXWwAOQoIGxgS4wvtUkvfHIIpz-8a8w496eczl",
+        },
+        .tigercheck_aarch64_linux = .{
+            .url = "https://github.com/enfipy/tigercheck/releases/download/0.1.0/tigercheck-aarch64-linux.zip",
+            .hash = "N-V-__8AAPDoWAClpMgYWpTvsw3Xt6ZeFPmXlYvKWy7w9L3J",
+        },
+        .tigercheck_aarch64_macos = .{
+            .url = "https://github.com/enfipy/tigercheck/releases/download/0.1.0/tigercheck-aarch64-macos.zip",
+            .hash = "N-V-__8AAJggDgApeQmtMEj8ywwy9LBkXfQdVAGinYlH4SIf",
+        },
+    },
+    .fingerprint = 0x2e0c353f143ad50e,
+}
