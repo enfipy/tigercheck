@@ -10,7 +10,7 @@ The goal of tigercheck is to turn NASA Power of 10, TigerStyle, and TigerBeetle 
 
 - Deterministic checks: every rule maps to an explicit enforcement mechanism.
 - Strict-by-default behavior: warnings and critical diagnostics fail CI.
-- Policy-aware profiles: run strict core or TigerBeetle repository mode.
+- Global core policy: one strict mode with optional rule-specific offs.
 - Precision gates: track FP/FN deltas per rule against a committed baseline.
 
 ## Failure Model
@@ -99,7 +99,7 @@ CLI diagnostics use the IDs below. This is the canonical catalog for NASA, Tiger
 | `TS06_POS_NEG_ASSERT` | Positive-space and negative-space assertion coverage | Enforced |
 | `TS07_MEMORY_PHASE` | Reuse `N03_STATIC_MEMORY` startup-only allocation policy | Enforced |
 | `TS08_SCOPE` | Reuse `N06_SCOPE_MINIMIZATION` for smallest declaration scope | Enforced |
-| `TS09_FUNCTION_SHAPE` | TigerStyle hard limit function-size policy (70-line default profile) | Enforced |
+| `TS09_FUNCTION_SHAPE` | TigerStyle hard limit function-size policy (70-line default limit) | Enforced |
 | `TS10_PEDANTIC` | Zero-warning compiler policy gate | Enforced |
 | `TS11_PACED_CONTROL` | Reject direct external-event mutation without batching boundary | Enforced |
 | `TS12_PLANE_BOUNDARY` | Control-plane/data-plane boundary checks and complexity ceilings | Enforced |
