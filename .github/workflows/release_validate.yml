@@ -3,6 +3,11 @@ permissions: {}
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Optional tag to validate (x.y.z). Defaults to latest release"
+        required: false
+        type: string
   workflow_run:
     workflows: ["Release"]
     types:
@@ -24,6 +29,14 @@ jobs:
           fetch-depth: 0
 
       - run: ./zig/download.sh
-      - run: ./zig/zig build release-validate
+      - name: Validate latest release
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.tag == '' }}
+        run: ./zig/zig build release-validate
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Validate selected release tag
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.tag != '' }}
+        run: ./zig/zig build release-validate -- --tag "${{ inputs.tag }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -230,14 +230,24 @@ fn print_usage() void {
 }
 
 fn parse_cli_options(init: std.process.Init) !CliOptions {
-    var args = init.minimal.args.iterate();
+    var args = try init.minimal.args.iterateAllocator(init.gpa);
+    defer args.deinit();
     const argv0 = args.next() orelse return error.InvalidArguments;
     assert(argv0.len > 0);
 
     var state = CliParseState{};
-
-    while (args.next()) |arg| {
+    const max_cli_args: u16 = 64;
+    var parsed_all = false;
+    var step: u16 = 0;
+    while (step < max_cli_args) : (step += 1) {
+        const arg = args.next() orelse {
+            parsed_all = true;
+            break;
+        };
         try parse_cli_token(arg, &args, &state);
+    }
+    if (!parsed_all) {
+        return error.InvalidArguments;
     }
 
     const resolved_target = state.target_path orelse return error.InvalidArguments;

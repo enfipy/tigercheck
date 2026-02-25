@@ -201,3 +201,27 @@ tigercheck is focused on one outcome: strict, deterministic Zig conformance in C
 - Precision tracking: keep baseline-driven FP/FN regression gates for every rule.
 - Determinism and performance: hold strict and bench lanes stable with release headroom.
 - CI UX: keep local and CI gates identical, concise, and reproducible.
+
+## Release Operations
+
+Release tooling is scripted in `src/tools/release.zig` and enforces deterministic inputs:
+
+- source SHA (`--sha`, defaults to `git rev-parse HEAD`)
+- fixed target order (`x86_64-linux`, `aarch64-linux`, `x86_64-windows`, `aarch64-macos`)
+- mandatory quality gates (`test`, `precision-check`, `check-strict`)
+- metadata artifacts (`RELEASE_METADATA`, `RELEASE_NOTES.md`, `SHA256SUMS`)
+
+Local dry-run (build + package + checksums + metadata, no publish):
+
+- `./zig/zig build release -- --version 0.1.0 --dry-run`
+
+Release validation:
+
+- latest release: `./zig/zig build release-validate`
+- specific tag: `./zig/zig build release-validate -- --tag 0.1.0`
+
+Recovery playbook:
+
+1. Draft created but assets missing: rerun release workflow with the same version after deleting the incomplete draft release.
+2. Checksum mismatch: stop publication, rebuild from the same source SHA, and compare `SHA256SUMS` before re-upload.
+3. Post-release validation failure: keep release tagged but publish a follow-up patch release with corrected artifacts and validation evidence.

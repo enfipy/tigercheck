@@ -4,27 +4,50 @@ const assert = std.debug.assert;
 const ReleaseArgs = struct {
     version: []const u8,
     sha: ?[]const u8,
+    dry_run: bool,
+};
+
+const ValidateArgs = struct {
+    tag: ?[]const u8,
 };
 
 const release_script_template =
     \\set -euo pipefail
     \\VERSION="__VERSION__"
     \\SHA="__SHA__"
-    \\
-    \\gh --version
+    \\DRY_RUN="__DRY_RUN__"
+    \\TARGETS=(
+    \\  x86_64-linux
+    \\  aarch64-linux
+    \\  x86_64-windows
+    \\  aarch64-macos
+    \\)
     \\
     \\if [ -z "${SHA}" ]; then
     \\  SHA="$(git rev-parse HEAD)"
     \\fi
     \\
-    \\if git rev-parse -q --verify "refs/tags/${VERSION}" >/dev/null; then
-    \\  echo "Tag ${VERSION} already exists"
-    \\  exit 1
-    \\fi
+    \\if [ "${DRY_RUN}" = "0" ]; then
+    \\  gh --version
     \\
-    \\if gh release view "${VERSION}" >/dev/null 2>&1; then
-    \\  echo "Release ${VERSION} already exists"
-    \\  exit 1
+    \\  if [ -z "${GITHUB_REPOSITORY:-}" ]; then
+    \\    echo "GITHUB_REPOSITORY is required"
+    \\    exit 1
+    \\  fi
+    \\  if [ -z "${GITHUB_TOKEN:-}" ]; then
+    \\    echo "GITHUB_TOKEN is required"
+    \\    exit 1
+    \\  fi
+    \\
+    \\  if git rev-parse -q --verify "refs/tags/${VERSION}" >/dev/null; then
+    \\    echo "Tag ${VERSION} already exists"
+    \\    exit 1
+    \\  fi
+    \\
+    \\  if gh release view "${VERSION}" >/dev/null 2>&1; then
+    \\    echo "Release ${VERSION} already exists"
+    \\    exit 1
+    \\  fi
     \\fi
     \\
     \\echo "release: running quality gates"
@@ -35,7 +58,7 @@ const release_script_template =
     \\rm -rf zig-out/dist/tigercheck
     \\mkdir -p zig-out/dist/tigercheck
     \\
-    \\for target in x86_64-linux aarch64-linux x86_64-windows aarch64-macos; do
+    \\for target in "${TARGETS[@]}"; do
     \\  echo "release: building target=${target}"
     \\  ./zig/zig build -Doptimize=ReleaseSafe -Dtarget="${target}"
     \\
@@ -47,23 +70,56 @@ const release_script_template =
     \\  zip -j "zig-out/dist/tigercheck/tigercheck-${target}.zip" "${binary}"
     \\done
     \\
-    \\(
-    \\  cd zig-out/dist/tigercheck
-    \\  sha256sum ./*.zip > SHA256SUMS
-    \\)
-    \\
-    \\echo "release: creating draft release ${VERSION}"
-    \\if [ -z "${GITHUB_REPOSITORY:-}" ]; then
-    \\  echo "GITHUB_REPOSITORY is required"
+    \\if command -v sha256sum >/dev/null 2>&1; then
+    \\  (
+    \\    cd zig-out/dist/tigercheck
+    \\    sha256sum ./*.zip > SHA256SUMS
+    \\  )
+    \\elif command -v shasum >/dev/null 2>&1; then
+    \\  (
+    \\    cd zig-out/dist/tigercheck
+    \\    shasum -a 256 ./*.zip > SHA256SUMS
+    \\  )
+    \\else
+    \\  echo "Need sha256sum or shasum"
     \\  exit 1
     \\fi
+    \\
+    \\ZIG_VERSION="$(./zig/zig version)"
+    \\TARGET_LIST="${TARGETS[*]}"
+    \\
+    \\cat > zig-out/dist/tigercheck/RELEASE_METADATA <<EOF
+    \\version=${VERSION}
+    \\source_sha=${SHA}
+    \\zig_version=${ZIG_VERSION}
+    \\targets=${TARGET_LIST}
+    \\gates=test,precision-check,check-strict
+    \\EOF
+    \\
+    \\cat > zig-out/dist/tigercheck/RELEASE_NOTES.md <<EOF
+    \\Release ${VERSION}
+    \\
+    \\- Source SHA: ${SHA}
+    \\- Zig version: ${ZIG_VERSION}
+    \\- Targets: ${TARGET_LIST}
+    \\- Quality gates: test, precision-check, check-strict
+    \\EOF
+    \\
+    \\if [ "${DRY_RUN}" = "1" ]; then
+    \\  echo "release: dry-run complete; artifacts ready in zig-out/dist/tigercheck"
+    \\  ls -1 zig-out/dist/tigercheck
+    \\  exit 0
+    \\fi
+    \\
+    \\echo "release: creating draft release ${VERSION}"
+    \\RELEASE_BODY="$(cat zig-out/dist/tigercheck/RELEASE_NOTES.md)"
     \\create_args=(
     \\  --method POST
     \\  "repos/${GITHUB_REPOSITORY}/releases"
     \\  -f "tag_name=${VERSION}"
     \\  -f "target_commitish=${SHA}"
     \\  -f "name=tigercheck ${VERSION}"
-    \\  -f "body=Release ${VERSION}"
+    \\  -f "body=${RELEASE_BODY}"
     \\  -F "draft=true"
     \\)
     \\gh api "${create_args[@]}" >/dev/null
@@ -75,6 +131,8 @@ const release_script_template =
     \\  zig-out/dist/tigercheck/tigercheck-x86_64-windows.zip
     \\  zig-out/dist/tigercheck/tigercheck-aarch64-macos.zip
     \\  zig-out/dist/tigercheck/SHA256SUMS
+    \\  zig-out/dist/tigercheck/RELEASE_METADATA
+    \\  zig-out/dist/tigercheck/RELEASE_NOTES.md
     \\)
     \\gh release upload "${upload_args[@]}"
     \\
@@ -86,7 +144,10 @@ const validate_script =
     \\set -euo pipefail
     \\
     \\gh --version
-    \\TAG="$(gh release list --limit 1 --json tagName --jq '.[0].tagName')"
+    \\TAG="__TAG__"
+    \\if [ -z "${TAG}" ]; then
+    \\  TAG="$(gh release list --limit 1 --json tagName --jq '.[0].tagName')"
+    \\fi
     \\
     \\if [ -z "${TAG}" ] || [ "${TAG}" = "null" ]; then
     \\  echo "No GitHub release found"
@@ -106,6 +167,8 @@ const validate_script =
     \\  tigercheck-x86_64-windows.zip
     \\  tigercheck-aarch64-macos.zip
     \\  SHA256SUMS
+    \\  RELEASE_METADATA
+    \\  RELEASE_NOTES.md
     \\)
     \\for artifact in "${artifact_names[@]}"; do
     \\  if [ ! -f "zig-out/release-validate/${artifact}" ]; then
@@ -118,6 +181,28 @@ const validate_script =
     \\  cd zig-out/release-validate
     \\  sha256sum --check SHA256SUMS
     \\)
+    \\
+    \\if grep -q "^version=${TAG}$" zig-out/release-validate/RELEASE_METADATA; then
+    \\  :
+    \\else
+    \\  echo "release metadata version mismatch"
+    \\  cat zig-out/release-validate/RELEASE_METADATA
+    \\  exit 1
+    \\fi
+    \\if grep -q "^source_sha=" zig-out/release-validate/RELEASE_METADATA; then
+    \\  :
+    \\else
+    \\  echo "release metadata missing source_sha"
+    \\  cat zig-out/release-validate/RELEASE_METADATA
+    \\  exit 1
+    \\fi
+    \\if grep -q "Release ${TAG}" zig-out/release-validate/RELEASE_NOTES.md; then
+    \\  :
+    \\else
+    \\  echo "release notes header mismatch"
+    \\  cat zig-out/release-validate/RELEASE_NOTES.md
+    \\  exit 1
+    \\fi
     \\
     \\if [ "$(uname -s)" = "Linux" ]; then
     \\  rm -rf zig-out/release-validate/bin
@@ -204,21 +289,28 @@ fn handle_release_command(
     assert(@sizeOf(@TypeOf(args.*)) > 0);
     assert(@sizeOf(@TypeOf(stdout.*)) > 0);
 
+    var tokens: [5]?[]const u8 = .{ null, null, null, null, null };
+    var token_count: u8 = 0;
+    while (token_count < tokens.len) : (token_count += 1) {
+        tokens[token_count] = args.next() orelse break;
+    }
+    if (token_count == tokens.len and args.next() != null) {
+        try print_usage(stdout);
+        try stdout.flush();
+        std.process.exit(2);
+    }
+
     const parsed_args = parse_release_args(
-        args.next(),
-        args.next(),
-        args.next(),
-        args.next(),
+        tokens[0],
+        tokens[1],
+        tokens[2],
+        tokens[3],
+        tokens[4],
     ) catch {
         try print_usage(stdout);
         try stdout.flush();
         std.process.exit(2);
     };
-    if (args.next() != null) {
-        try print_usage(stdout);
-        try stdout.flush();
-        std.process.exit(2);
-    }
 
     run_release(allocator, io, stdout, parsed_args) catch |err| {
         try stdout.print("release: release failed: {}\n", .{err});
@@ -233,13 +325,21 @@ fn handle_validate_command(
     io: std.Io,
     stdout: *std.Io.Writer,
 ) !void {
+    assert(@sizeOf(@TypeOf(args.*)) > 0);
+    assert(@sizeOf(@TypeOf(stdout.*)) > 0);
+
+    const parsed_args = parse_validate_args(args.next(), args.next()) catch {
+        try print_usage(stdout);
+        try stdout.flush();
+        std.process.exit(2);
+    };
     if (args.next() != null) {
         try print_usage(stdout);
         try stdout.flush();
         std.process.exit(2);
     }
 
-    run_validate(allocator, io, stdout) catch |err| {
+    run_validate(allocator, io, stdout, parsed_args) catch |err| {
         try stdout.print("release: validation failed: {}\n", .{err});
         try stdout.flush();
         std.process.exit(1);
@@ -251,27 +351,56 @@ fn parse_release_args(
     arg2: ?[]const u8,
     arg3: ?[]const u8,
     arg4: ?[]const u8,
+    arg5: ?[]const u8,
 ) !ReleaseArgs {
-    assert(arg1 != null);
-    assert(arg2 != null);
+    assert(arg1 != null or arg2 == null);
+    assert(arg3 == null or arg3.?.len > 0);
+    assert(arg4 == null or arg4.?.len > 0);
+    assert(arg5 == null or arg5.?.len > 0);
+    if (arg1 == null) return error.InvalidArguments;
 
-    if (arg1 == null or arg2 == null) return error.InvalidArguments;
-    if (arg3 == null and arg4 != null) return error.InvalidArguments;
-    if (arg3 != null and arg4 == null) return error.InvalidArguments;
+    var tokens = [_]?[]const u8{ arg1, arg2, arg3, arg4, arg5 };
+    assert(tokens[0] != null);
 
-    var state = ParseState{ .version = null, .sha = null };
-    state = try parse_release_pair(state, arg1.?, arg2.?);
-
-    if (arg3 != null and arg4 != null) {
-        state = try parse_release_pair(state, arg3.?, arg4.?);
+    var state = ParseState{ .version = null, .sha = null, .dry_run = false };
+    var token_index: u8 = 0;
+    while (token_index < tokens.len) : (token_index += 1) {
+        const flag = tokens[token_index] orelse break;
+        token_index = try parse_release_token(flag, &tokens, token_index, &state);
+        token_index -= 1;
     }
 
     return try finalize_release_args(state);
 }
 
+fn parse_release_token(
+    flag: []const u8,
+    tokens: *const [5]?[]const u8,
+    token_index: u8,
+    state: *ParseState,
+) !u8 {
+    assert(flag.len > 0);
+    assert(token_index < tokens.len);
+    assert(state.version == null or state.version.?.len > 0);
+    if (flag.len == 0) return error.InvalidArguments;
+
+    if (std.mem.eql(u8, flag, "--dry-run")) {
+        if (state.dry_run) return error.InvalidArguments;
+        state.dry_run = true;
+        return token_index + 1;
+    }
+
+    const value_index = token_index + 1;
+    if (value_index >= tokens.len) return error.InvalidArguments;
+    const value = tokens[value_index] orelse return error.InvalidArguments;
+    state.* = try parse_release_pair(state.*, flag, value);
+    return value_index + 1;
+}
+
 const ParseState = struct {
     version: ?[]const u8,
     sha: ?[]const u8,
+    dry_run: bool,
 };
 
 fn parse_release_pair(state_in: ParseState, flag: []const u8, value: []const u8) !ParseState {
@@ -281,10 +410,12 @@ fn parse_release_pair(state_in: ParseState, flag: []const u8, value: []const u8)
 
     var state = state_in;
     if (std.mem.eql(u8, flag, "--version")) {
+        if (state.version != null) return error.InvalidArguments;
         state.version = value;
         return state;
     }
     if (std.mem.eql(u8, flag, "--sha")) {
+        if (state.sha != null) return error.InvalidArguments;
         state.sha = value;
         return state;
     }
@@ -307,7 +438,29 @@ fn finalize_release_args(state: ParseState) !ReleaseArgs {
         }
     }
 
-    return .{ .version = parsed_version, .sha = state.sha };
+    return .{ .version = parsed_version, .sha = state.sha, .dry_run = state.dry_run };
+}
+
+fn parse_validate_args(arg1: ?[]const u8, arg2: ?[]const u8) !ValidateArgs {
+    assert(arg1 == null or arg1.?.len > 0);
+    assert(arg2 == null or arg2.?.len > 0);
+    if (arg1 == null and arg2 == null) {
+        return .{ .tag = null };
+    }
+    if (arg1 == null or arg2 == null) {
+        return error.InvalidArguments;
+    }
+    if (std.mem.eql(u8, arg1.?, "--tag")) {
+        // positive invariant
+    } else {
+        return error.InvalidArguments;
+    }
+    if (is_semver(arg2.?)) {
+        // positive invariant
+    } else {
+        return error.InvalidArguments;
+    }
+    return .{ .tag = arg2.? };
 }
 
 fn run_release(
@@ -316,7 +469,9 @@ fn run_release(
     stdout: *std.Io.Writer,
     args: ReleaseArgs,
 ) !void {
+    assert(args.version.len > 0);
     const sha = args.sha orelse "";
+
     const with_version = try std.mem.replaceOwned(
         u8,
         allocator,
@@ -326,20 +481,47 @@ fn run_release(
     );
     defer allocator.free(with_version);
 
-    const script = try std.mem.replaceOwned(
+    const with_sha = try std.mem.replaceOwned(
         u8,
         allocator,
         with_version,
         "__SHA__",
         sha,
     );
+    defer allocator.free(with_sha);
+
+    var dry_run_value = "0";
+    if (args.dry_run) {
+        dry_run_value = "1";
+    }
+    const script = try std.mem.replaceOwned(
+        u8,
+        allocator,
+        with_sha,
+        "__DRY_RUN__",
+        dry_run_value,
+    );
     defer allocator.free(script);
 
     try run_shell(allocator, io, stdout, script);
 }
 
-fn run_validate(allocator: std.mem.Allocator, io: std.Io, stdout: *std.Io.Writer) !void {
-    try run_shell(allocator, io, stdout, validate_script);
+fn run_validate(
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    stdout: *std.Io.Writer,
+    args: ValidateArgs,
+) !void {
+    const tag = args.tag orelse "";
+    const script = try std.mem.replaceOwned(
+        u8,
+        allocator,
+        validate_script,
+        "__TAG__",
+        tag,
+    );
+    defer allocator.free(script);
+    try run_shell(allocator, io, stdout, script);
 }
 
 fn run_shell(
@@ -455,7 +637,7 @@ fn assert_non_empty(text: []const u8) !void {
 fn print_usage(stdout: *std.Io.Writer) !void {
     try stdout.writeAll(
         "usage:\n" ++
-            "  release release --version <x.y.z> [--sha <commit>]\n" ++
-            "  release validate\n",
+            "  release release --version <x.y.z> [--sha <commit>] [--dry-run]\n" ++
+            "  release validate [--tag <x.y.z>]\n",
     );
 }
