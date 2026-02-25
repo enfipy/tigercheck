@@ -6,10 +6,19 @@ const assert = std.debug.assert;
 
 const Ast = std.zig.Ast;
 
+pub const LoopPacingEvidence = struct {
+    external_event_call: []const u8,
+    direct_mutation_call: []const u8,
+    batch_boundary_call: []const u8,
+};
+
 const LoopPacingFacts = struct {
     has_external_event_call: bool = false,
+    external_event_call: []const u8 = "",
     has_direct_mutation_call: bool = false,
+    direct_mutation_call: []const u8 = "",
     has_batch_boundary_call: bool = false,
+    batch_boundary_call: []const u8 = "",
 };
 
 const LoopPacingVisitCtx = struct {
@@ -32,13 +41,28 @@ pub fn loop_has_unpaced_external_mutation(
     role_index: *roles.SemanticIndex,
     body_node: Ast.Node.Index,
 ) bool {
+    return loop_unpaced_external_mutation_evidence(role_index, body_node) != null;
+}
+
+pub fn loop_unpaced_external_mutation_evidence(
+    role_index: *roles.SemanticIndex,
+    body_node: Ast.Node.Index,
+) ?LoopPacingEvidence {
     const tree = role_index.tree;
-    if (body_node == .root or @intFromEnum(body_node) >= tree.nodes.len) return false;
+    if (body_node == .root or @intFromEnum(body_node) >= tree.nodes.len) return null;
     var facts: LoopPacingFacts = .{};
     collect_loop_pacing_facts(role_index, body_node, &facts);
-    return facts.has_external_event_call and
+    const violation = facts.has_external_event_call and
         facts.has_direct_mutation_call and
         !facts.has_batch_boundary_call;
+    if (!violation) return null;
+    assert(facts.external_event_call.len > 0);
+    assert(facts.direct_mutation_call.len > 0);
+    return .{
+        .external_event_call = facts.external_event_call,
+        .direct_mutation_call = facts.direct_mutation_call,
+        .batch_boundary_call = facts.batch_boundary_call,
+    };
 }
 
 fn collect_loop_pacing_facts(
@@ -89,22 +113,13 @@ fn track_loop_pacing_call(
     if (len == 0) return;
 
     const leaf = path[@as(usize, len - 1)];
-    var parent: []const u8 = "";
-    if (len > 1) {
-        parent = path[@as(usize, len - 2)];
-    }
+    const parent = loop_call_parent_name(&path, len);
 
     const leaf_roles = role_index.symbol_role_mask_for_identifier_cached(leaf);
     assert(leaf_roles <= std.math.maxInt(roles.SymbolRoleMask));
-    var parent_roles: roles.SymbolRoleMask = 0;
-    if (parent.len > 0) {
-        parent_roles = role_index.symbol_role_mask_for_identifier_cached(parent);
-    }
+    const parent_roles = loop_parent_roles(role_index, parent);
     const receiver = call_expr.call_receiver_identifier(tree, fn_expr);
-    var receiver_roles: roles.SymbolRoleMask = 0;
-    if (receiver) |name| {
-        receiver_roles = role_index.symbol_role_mask_for_identifier_cached(name);
-    }
+    const receiver_roles = loop_receiver_roles(role_index, receiver);
     const callee_facts = role_index.function_role_facts_by_name_cached(leaf);
     const call_info = LoopPacingCallInfo{
         .leaf_name = leaf,
@@ -117,13 +132,71 @@ fn track_loop_pacing_call(
         .callee_has_mutable_self = callee_facts.has_mutable_self_param,
     };
 
+    note_external_event_fact(facts, call_info);
+    note_direct_mutation_fact(facts, call_info);
+    note_batch_boundary_fact(facts, call_info);
+}
+
+fn loop_call_parent_name(path: *const [6][]const u8, len: u8) []const u8 {
+    assert(len <= path.len);
+    if (len == 0) {
+        return "";
+    }
+    if (len > 1) {
+        return path[@as(usize, len - 2)];
+    }
+    assert(len == 1);
+    return "";
+}
+
+fn loop_parent_roles(
+    role_index: *roles.SemanticIndex,
+    parent: []const u8,
+) roles.SymbolRoleMask {
+    assert(parent.len <= std.math.maxInt(u32));
+    if (parent.len == 0) {
+        assert(parent.len == 0);
+        return 0;
+    }
+    assert(parent.len > 0);
+    return role_index.symbol_role_mask_for_identifier_cached(parent);
+}
+
+fn loop_receiver_roles(
+    role_index: *roles.SemanticIndex,
+    receiver: ?[]const u8,
+) roles.SymbolRoleMask {
+    if (receiver) |name| {
+        assert(name.len > 0);
+        return role_index.symbol_role_mask_for_identifier_cached(name);
+    }
+    assert(receiver == null);
+    return 0;
+}
+
+fn note_external_event_fact(facts: *LoopPacingFacts, call_info: LoopPacingCallInfo) void {
     if (call_is_external_event(call_info)) {
+        if (!facts.has_external_event_call) {
+            facts.external_event_call = call_info.leaf_name;
+        }
         facts.has_external_event_call = true;
     }
+}
+
+fn note_direct_mutation_fact(facts: *LoopPacingFacts, call_info: LoopPacingCallInfo) void {
     if (call_is_direct_mutation(call_info)) {
+        if (!facts.has_direct_mutation_call) {
+            facts.direct_mutation_call = call_info.leaf_name;
+        }
         facts.has_direct_mutation_call = true;
     }
+}
+
+fn note_batch_boundary_fact(facts: *LoopPacingFacts, call_info: LoopPacingCallInfo) void {
     if (call_is_batch_boundary(call_info)) {
+        if (!facts.has_batch_boundary_call) {
+            facts.batch_boundary_call = call_info.leaf_name;
+        }
         facts.has_batch_boundary_call = true;
     }
 }

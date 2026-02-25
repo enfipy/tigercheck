@@ -3362,6 +3362,34 @@ fn detect_implicit_builtin_style_violations(
     }
 }
 
+fn append_ts11_paced_control_diag(
+    role_index: *roles.SemanticIndex,
+    body_node: std.zig.Ast.Node.Index,
+    file_path: []const u8,
+    result: *Result,
+) anyerror!void {
+    assert(file_path.len > 0);
+    assert(result.diagnostics.items.len == result.warning_count + result.critical_count);
+    if (file_path.len == 0) return;
+    const evidence =
+        event_pacing.loop_unpaced_external_mutation_evidence(role_index, body_node) orelse return;
+    var boundary: []const u8 = "none";
+    if (evidence.batch_boundary_call.len > 0) {
+        boundary = evidence.batch_boundary_call;
+    }
+    const msg = try std.fmt.allocPrint(
+        result.diagnostics.allocator,
+        "TS11_PACED_CONTROL: require explicit batch boundary before state updates " ++
+            "(external call=`{s}`, mutation call=`{s}`, boundary call=`{s}`)",
+        .{
+            evidence.external_event_call,
+            evidence.direct_mutation_call,
+            boundary,
+        },
+    );
+    try append_diag(result, .warning, .TS11_PACED_CONTROL, file_path, msg);
+}
+
 fn walk_implicit_while(
     role_index: *roles.SemanticIndex,
     tree: *const std.zig.Ast,
@@ -3397,16 +3425,8 @@ fn walk_implicit_while(
             "TS02_EXPLICIT_BOUNDS: queue growth in loop requires explicit queue-capacity bounds",
         );
     }
-    if (!is_self_analysis_source_file(file_path) and
-        event_pacing.loop_has_unpaced_external_mutation(role_index, full.ast.then_expr))
-    {
-        try append_diag(
-            result,
-            .warning,
-            .TS11_PACED_CONTROL,
-            file_path,
-            "TS11_PACED_CONTROL: require explicit batch boundary before state updates",
-        );
+    if (!is_self_analysis_source_file(file_path)) {
+        try append_ts11_paced_control_diag(role_index, full.ast.then_expr, file_path, result);
     }
     if (is_literal_true(tree, full.ast.cond_expr)) {
         try diagnostics.append_pair(
@@ -3496,16 +3516,8 @@ fn walk_implicit_for(
             "TS02_EXPLICIT_BOUNDS: queue growth in loop requires explicit queue-capacity bounds",
         );
     }
-    if (!is_self_analysis_source_file(file_path) and
-        event_pacing.loop_has_unpaced_external_mutation(role_index, full.ast.then_expr))
-    {
-        try append_diag(
-            result,
-            .warning,
-            .TS11_PACED_CONTROL,
-            file_path,
-            "TS11_PACED_CONTROL: require explicit batch boundary before state updates",
-        );
+    if (!is_self_analysis_source_file(file_path)) {
+        try append_ts11_paced_control_diag(role_index, full.ast.then_expr, file_path, result);
     }
 }
 

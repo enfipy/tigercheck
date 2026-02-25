@@ -286,11 +286,11 @@
       "rule_id": "TS11_PACED_CONTROL",
       "prefix": "TS11",
       "positives": 3,
-      "negatives": 2,
+      "negatives": 3,
       "tp": 3,
       "fp": 0,
       "fn_count": 0,
-      "tn": 2,
+      "tn": 3,
       "precision": 1,
       "recall": 1,
       "fp_cases": [],
@@ -578,14 +578,14 @@
     }
   ],
   "totals": {
-    "evaluated_cases": 118,
+    "evaluated_cases": 119,
     "skipped_cases": 0,
     "positives": 64,
-    "negatives": 54,
+    "negatives": 55,
     "tp": 64,
     "fp": 0,
     "fn_count": 0,
-    "tn": 54,
+    "tn": 55,
     "contract_failures": 0
   }
 }

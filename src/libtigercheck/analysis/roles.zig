@@ -100,7 +100,6 @@ pub fn token_has_event_role_hint(token: []const u8) bool {
     if (token.len == 0) return false;
     return contains_ascii_case_insensitive(token, "event") or
         contains_ascii_case_insensitive(token, "socket") or
-        contains_ascii_case_insensitive(token, "stream") or
         contains_ascii_case_insensitive(token, "listener") or
         contains_ascii_case_insensitive(token, "receiver") or
         contains_ascii_case_insensitive(token, "source");
