@@ -154,6 +154,116 @@ Perf benchmark options:
 - `./zig/zig build bench -- --runs 5`
 - `./zig/zig build bench -- --runs 5 --json`
 
+## Using tigercheck in another Zig project
+
+### Build-step only integration
+
+Add a `tigercheck` step to your `build.zig`, then make your `check` step depend on it:
+
+```zig
+const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    // Example compile check step.
+    const exe_check = b.addExecutable(.{
+        .name = "my-project-check",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+
+    const tigercheck_exe = b.option(
+        []const u8,
+        "tigercheck-exe",
+        "Path to tigercheck binary",
+    ) orelse "tigercheck";
+
+    const tigercheck_target = b.option(
+        []const u8,
+        "tigercheck-target",
+        "Path to analyze",
+    ) orelse "src";
+
+    const tigercheck_cmd = b.addSystemCommand(&.{
+        tigercheck_exe,
+        "--format",
+        "text",
+        tigercheck_target,
+    });
+
+    const tigercheck_step = b.step("tigercheck", "Run tigercheck");
+    tigercheck_step.dependOn(&tigercheck_cmd.step);
+
+    const check = b.step("check", "Compile + tigercheck");
+    check.dependOn(&exe_check.step);
+    check.dependOn(tigercheck_step);
+}
+```
+
+Usage examples:
+
+- `zig build tigercheck`
+- `zig build check`
+- `zig build check -Dtigercheck-exe=../tiger/zig-out/bin/tigercheck`
+- `zig build check -Dtigercheck-target=.`
+
+### Pinned binary with hash (recommended)
+
+For CI and long-lived repos, pin the tigercheck binary like TigerBeetle pins docs tooling:
+
+- `tigerbeetle/src/docs_website/build.zig.zon` pins `pandoc` and `vale` by `.url` + `.hash`.
+- `tigerbeetle/src/docs_website/build.zig` resolves the host tool with `b.lazyDependency(...)`.
+- `tigerbeetle/src/docs_website/src/page_writer.zig` computes SHA-256 for inline scripts (CSP hash).
+- `tigerbeetle/src/docs_website/build.zig` passes `git-commit` as the service-worker cache name.
+
+We recommend the same pattern for tigercheck: add per-platform release assets to your `build.zig.zon` with a fixed URL and content hash, then execute that pinned binary from `build.zig`.
+
+Use `zig fetch <url>` to obtain the content hash for each release artifact.
+
+```zon
+.{
+    .name = .my_project,
+    .version = "0.0.0",
+    .dependencies = .{
+        .tigercheck_linux_x86_64 = .{
+            .url = "https://github.com/enfipy/tiger/releases/download/0.1.0/tigercheck-x86_64-linux.zip",
+            .hash = "<hash-from-zig-fetch>",
+            .lazy = true,
+        },
+    },
+    .paths = .{"."},
+}
+```
+
+```zig
+const host = b.graph.host.result;
+const dep_name = switch (host.os.tag) {
+    .linux => switch (host.cpu.arch) {
+        .x86_64 => "tigercheck_linux_x86_64",
+        else => @panic("unsupported linux arch"),
+    },
+    else => @panic("unsupported host"),
+};
+
+const dep = b.lazyDependency(dep_name, .{}) orelse @panic("missing tigercheck dependency");
+const tigercheck_rel = switch (host.os.tag) {
+    .windows => "tigercheck.exe",
+    else => "tigercheck",
+};
+const tigercheck_bin = dep.path(tigercheck_rel);
+
+const tigercheck_cmd = b.addSystemCommand(&.{});
+tigercheck_cmd.addFileArg(tigercheck_bin);
+tigercheck_cmd.addArgs(&.{ "--format", "text", "src" });
+```
+
+This gives you reproducible toolchain behavior, avoids accidental analyzer drift, and makes local + CI diagnostics consistent.
+
 ## CI and Quality Gates
 
 ```yaml
