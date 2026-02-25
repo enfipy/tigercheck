@@ -3,6 +3,7 @@
 .zig-cache/
 zig-cache/
 zig-out/
+zig-pkg/
 
 # Death to .DS_Store
 .DS_Store
