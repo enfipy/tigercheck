@@ -1,10 +1,10 @@
 $ErrorActionPreference = "Stop"
 
 $ZIG_MIRROR="https://pkg.machengine.org/zig"
-$ZIG_RELEASE = "0.16.0-dev.2535+b5bd49460"
+$ZIG_RELEASE = "0.16.0-dev.2637+6a9510c0e"
 $ZIG_CHECKSUMS = @"
-$ZIG_MIRROR/0.16.0-dev.2535+b5bd49460/zig-aarch64-windows-0.16.0-dev.2535+b5bd49460.zip 854e16d3529866bf97bef6d4b11fe09ea475b134b818e4b038fafae2b9d1ddeb
-$ZIG_MIRROR/0.16.0-dev.2535+b5bd49460/zig-x86_64-windows-0.16.0-dev.2535+b5bd49460.zip 9e9c4088793823a78edcc88fc5fcd4cbecf7af2ab425bbd98d2d2284ad17234b
+$ZIG_MIRROR/0.16.0-dev.2637+6a9510c0e/zig-aarch64-windows-0.16.0-dev.2637+6a9510c0e.zip efd435ef743897882ec2d1047da0a34e44681e0cc2966db498d7d16ee80bb2b5
+$ZIG_MIRROR/0.16.0-dev.2637+6a9510c0e/zig-x86_64-windows-0.16.0-dev.2637+6a9510c0e.zip 9e5570f66f17e74e037c01102208963433bd13f034926fe40f55b05ec0e8a28d
 "@
 
 $ZIG_ARCH = if ($env:PROCESSOR_ARCHITECTURE -eq "ARM64") {

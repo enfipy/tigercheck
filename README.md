@@ -25,7 +25,17 @@ If you hit a panic with message prefix `internal invariant violated:`, report it
 
 ## Quick Start
 
-Requires Zig `0.16.0-dev`.
+Use the repo-pinned Zig toolchain so the `zig` binary and `lib` directory stay in sync with CI:
+
+```bash
+# macOS/Linux
+./zig/download.sh
+
+# Windows (PowerShell)
+./zig/download.win.ps1
+```
+
+If you plan to contribute, we recommend using these scripts rather than a global Zig install.
 
 ```bash
 ./zig/zig build
