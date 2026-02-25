@@ -206,6 +206,7 @@ fn collect_sorted_zig_files(
 }
 
 fn collect_required_prefixes(allocator: std.mem.Allocator) !PrefixLists {
+    assert(rule_count > 0);
     var out = PrefixLists{
         .required = std.array_list.Managed([]const u8).init(allocator),
         .required_set = std.StringHashMap(void).init(allocator),
@@ -214,12 +215,15 @@ fn collect_required_prefixes(allocator: std.mem.Allocator) !PrefixLists {
 
     for (all_rule_ids) |rule_id| {
         const prefix = rule_prefix(rule_id);
+        assert(prefix.len > 0);
         const gop = try out.required_set.getOrPut(prefix);
         if (!gop.found_existing) {
             try out.required.append(prefix);
         }
+        assert(out.required.items.len <= out.required_set.count());
     }
     corpus_common.sort_paths(&out.required);
+    assert(out.required.items.len == out.required_set.count());
     return out;
 }
 

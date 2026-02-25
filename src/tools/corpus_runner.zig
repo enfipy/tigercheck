@@ -18,14 +18,14 @@ const ExpectationDirectives = struct {
     message_substring: ?[]const u8 = null,
 };
 
-const JsonDiagnostic = struct {
+const JSONDiagnostic = struct {
     rule_id: []const u8,
     message: []const u8,
 };
 
-const JsonRunOutput = struct {
+const JSONRunOutput = struct {
     schema_version: u32,
-    diagnostics: []const JsonDiagnostic,
+    diagnostics: []const JSONDiagnostic,
 };
 
 const TestObservation = struct {
@@ -123,7 +123,7 @@ fn process_test_file(
     }
 
     const parsed_output = std.json.parseFromSlice(
-        JsonRunOutput,
+        JSONRunOutput,
         allocator,
         result.stdout,
         .{ .allocate = .alloc_always, .ignore_unknown_fields = true },
@@ -186,7 +186,7 @@ fn profile_for_test_file(file_path: []const u8) ?[]const u8 {
 fn observe_test_result(
     basename: []const u8,
     expect_pass: bool,
-    diagnostics: []const JsonDiagnostic,
+    diagnostics: []const JSONDiagnostic,
     term: std.process.Child.Term,
     directives: ExpectationDirectives,
 ) TestObservation {
@@ -371,10 +371,15 @@ fn parse_expectation_directive_line(
 }
 
 fn expected_output_matches_expectation(
-    diagnostics: []const JsonDiagnostic,
+    diagnostics: []const JSONDiagnostic,
     expected_prefixes: ExpectedRulePrefixes,
     direct_rule_id: ?[]const u8,
 ) bool {
+    assert(direct_rule_id == null or direct_rule_id.?.len > 0);
+    assert(expected_prefixes.primary != null or expected_prefixes.fallback == null);
+    if (diagnostics.len == 0 and direct_rule_id != null) {
+        return false;
+    }
     if (direct_rule_id) |rule_id| {
         if (rule_id.len == 0) return false;
         return diagnostics_mention_rule_id(diagnostics, rule_id);
@@ -383,10 +388,16 @@ fn expected_output_matches_expectation(
 }
 
 fn expected_output_matches_message(
-    diagnostics: []const JsonDiagnostic,
+    diagnostics: []const JSONDiagnostic,
     message_substring: ?[]const u8,
 ) bool {
+    assert(message_substring == null or message_substring.?.len > 0);
+    assert(diagnostics.len <= 4096);
+    if (diagnostics.len == 0 and message_substring != null) {
+        return false;
+    }
     const expected = message_substring orelse return true;
+    assert(expected.len > 0);
     if (expected.len == 0) return false;
     for (diagnostics) |diag| {
         if (std.mem.indexOf(u8, diag.message, expected) != null) {
@@ -397,25 +408,35 @@ fn expected_output_matches_message(
 }
 
 fn expected_output_matches_rule_prefixes(
-    diagnostics: []const JsonDiagnostic,
+    diagnostics: []const JSONDiagnostic,
     expected: ExpectedRulePrefixes,
 ) bool {
+    assert(diagnostics.len <= 4096);
+    assert(expected.primary != null or expected.fallback == null);
+    assert(expected.primary == null or expected.primary.?.len > 0);
+    assert(expected.fallback == null or expected.fallback.?.len > 0);
+    if (diagnostics.len > 4096) {
+        return false;
+    }
+    if (expected.fallback != null and expected.primary == null) {
+        return false;
+    }
     if (diagnostics.len == 0) {
         return expected.primary == null;
     }
     const primary = expected.primary orelse return true;
-    if (diagnostics_mention_rule_prefix(diagnostics, primary)) {
-        return true;
-    }
-    if (expected.fallback) |fallback| {
-        if (diagnostics_mention_rule_prefix(diagnostics, fallback)) {
-            return true;
+    if (primary.len == 0) return false;
+    if (!diagnostics_mention_rule_prefix(diagnostics, primary)) {
+        if (expected.fallback) |fallback| {
+            if (fallback.len == 0) return false;
+            return diagnostics_mention_rule_prefix(diagnostics, fallback);
         }
+        return false;
     }
-    return false;
+    return true;
 }
 
-fn diagnostics_mention_rule_id(diagnostics: []const JsonDiagnostic, rule_id: []const u8) bool {
+fn diagnostics_mention_rule_id(diagnostics: []const JSONDiagnostic, rule_id: []const u8) bool {
     assert(rule_id.len > 0);
     if (rule_id.len == 0) return false;
     for (diagnostics) |diag| {
@@ -461,7 +482,7 @@ fn print_expected_rule_expectation(
     );
 }
 
-fn diagnostics_mention_rule_prefix(diagnostics: []const JsonDiagnostic, prefix: []const u8) bool {
+fn diagnostics_mention_rule_prefix(diagnostics: []const JSONDiagnostic, prefix: []const u8) bool {
     assert(prefix.len > 0);
     if (prefix.len == 0) return false;
     for (diagnostics) |diag| {

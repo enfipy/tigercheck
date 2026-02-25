@@ -23,7 +23,7 @@ const CliOptions = struct {
     target_path: []const u8,
 };
 
-const JsonDiagnostic = struct {
+const JSONDiagnostic = struct {
     severity: libtigercheck.analysis.Severity,
     rule_id: []const u8,
     summary: []const u8,
@@ -36,7 +36,7 @@ const JsonDiagnostic = struct {
     effective_action: ?libtigercheck.policy.Action,
 };
 
-const JsonRunOutput = struct {
+const JSONRunOutput = struct {
     schema_version: u32,
     policy_profile: []const u8,
     policy_applied: bool,
@@ -44,14 +44,14 @@ const JsonRunOutput = struct {
     critical_count: usize,
     suppressed_count: usize,
     downgraded_count: usize,
-    diagnostics: []const JsonDiagnostic,
+    diagnostics: []const JSONDiagnostic,
 };
 
-const OwnedJsonRunOutput = struct {
-    diagnostics: std.array_list.Managed(JsonDiagnostic),
-    value: JsonRunOutput,
+const OwnedJSONRunOutput = struct {
+    diagnostics: std.array_list.Managed(JSONDiagnostic),
+    value: JSONRunOutput,
 
-    fn deinit(self: *OwnedJsonRunOutput) void {
+    fn deinit(self: *OwnedJSONRunOutput) void {
         self.diagnostics.deinit();
     }
 };
@@ -230,53 +230,84 @@ fn print_usage() void {
 }
 
 fn parse_cli_options(init: std.process.Init) !CliOptions {
-    var args_arena = std.heap.ArenaAllocator.init(init.gpa);
-    defer args_arena.deinit();
-    const argv = try init.minimal.args.toSlice(args_arena.allocator());
-    const arg_count = argv.len;
-    assert(arg_count > 0);
+    var args = init.minimal.args.iterate();
+    const argv0 = args.next() orelse return error.InvalidArguments;
+    assert(argv0.len > 0);
 
-    var option_flags: u8 = 0;
-    var profile: libtigercheck.policy.Profile = .strict_core;
-    var output_format: OutputFormat = .text;
-    var target_path: ?[]const u8 = null;
+    var state = CliParseState{};
 
-    var arg_index: usize = 1;
-    while (arg_index < arg_count) : (arg_index += 1) {
-        const kind = cli_arg_kind(argv[arg_index]);
-        switch (kind) {
-            .unknown => return error.InvalidArguments,
-            .profile => {
-                arg_index += 1;
-                if (arg_index >= arg_count) return error.InvalidArguments;
-                profile = parse_profile_arg(argv[arg_index]) orelse return error.InvalidArguments;
-            },
-            .format => {
-                arg_index += 1;
-                if (arg_index >= arg_count) return error.InvalidArguments;
-                output_format = parse_output_format_arg(argv[arg_index]) orelse
-                    return error.InvalidArguments;
-            },
-            .positional => {
-                target_path = try parse_positional_arg(target_path, argv[arg_index]);
-            },
-            .dump_graph, .explain_policy, .explain_strict => {
-                option_flags |= cli_flag_bit(kind);
-            },
-        }
+    while (args.next()) |arg| {
+        try parse_cli_token(arg, &args, &state);
     }
 
-    const resolved_target = target_path orelse return error.InvalidArguments;
+    const resolved_target = state.target_path orelse return error.InvalidArguments;
     assert(std.mem.indexOfScalar(u8, resolved_target, 0) == null);
 
     return .{
-        .dump_graph = (option_flags & (1 << 0)) != 0,
-        .explain_policy = (option_flags & (1 << 1)) != 0,
-        .explain_strict = (option_flags & (1 << 2)) != 0,
-        .output_format = output_format,
-        .profile = profile,
+        .dump_graph = state.dump_graph,
+        .explain_policy = state.explain_policy,
+        .explain_strict = state.explain_strict,
+        .output_format = state.output_format,
+        .profile = state.profile,
         .target_path = resolved_target,
     };
+}
+
+const CliParseState = struct {
+    dump_graph: bool = false,
+    explain_policy: bool = false,
+    explain_strict: bool = false,
+    output_format: OutputFormat = .text,
+    profile: libtigercheck.policy.Profile = .strict_core,
+    target_path: ?[]const u8 = null,
+};
+
+fn parse_cli_token(
+    arg: []const u8,
+    args: *std.process.Args.Iterator,
+    state: *CliParseState,
+) !void {
+    assert(arg.len > 0);
+    assert(state.profile == .strict_core or state.profile == .tigerbeetle_repo);
+    if (arg.len == 0) return error.InvalidArguments;
+
+    const kind = cli_arg_kind(arg);
+    if (kind == .profile) {
+        const value = args.next() orelse return error.InvalidArguments;
+        state.profile = parse_profile_arg(value) orelse return error.InvalidArguments;
+        return;
+    }
+    if (kind == .format) {
+        const value = args.next() orelse return error.InvalidArguments;
+        state.output_format = parse_output_format_arg(value) orelse
+            return error.InvalidArguments;
+        return;
+    }
+    if (kind == .positional) {
+        state.target_path = try parse_positional_arg(state.target_path, arg);
+        return;
+    }
+    try apply_simple_cli_flag(kind, state);
+}
+
+fn apply_simple_cli_flag(kind: CliArgKind, state: *CliParseState) !void {
+    assert(state.profile == .strict_core or state.profile == .tigerbeetle_repo);
+    if (kind == .dump_graph) {
+        state.dump_graph = true;
+        return;
+    }
+    if (kind == .explain_policy) {
+        state.explain_policy = true;
+        return;
+    }
+    if (kind == .explain_strict) {
+        state.explain_strict = true;
+        return;
+    }
+    if (kind == .unknown) {
+        return error.InvalidArguments;
+    }
+    return error.InvalidArguments;
 }
 
 fn parse_profile_arg(profile_name: []const u8) ?libtigercheck.policy.Profile {
@@ -298,15 +329,6 @@ fn parse_positional_arg(target_path: ?[]const u8, arg: []const u8) !?[]const u8 
     if (arg.len == 0) return error.InvalidArguments;
     if (target_path == null) return arg;
     return error.InvalidArguments;
-}
-
-fn cli_flag_bit(kind: CliArgKind) u8 {
-    return switch (kind) {
-        .dump_graph => 1 << 0,
-        .explain_policy => 1 << 1,
-        .explain_strict => 1 << 2,
-        .format, .profile, .positional, .unknown => 0,
-    };
 }
 
 const CliArgKind = enum {
@@ -550,8 +572,8 @@ fn build_json_run_output(
     allocator: std.mem.Allocator,
     location_cache: *LocationCache,
     result: libtigercheck.analysis.Result,
-) !OwnedJsonRunOutput {
-    var diagnostics = std.array_list.Managed(JsonDiagnostic).init(allocator);
+) !OwnedJSONRunOutput {
+    var diagnostics = std.array_list.Managed(JSONDiagnostic).init(allocator);
     errdefer diagnostics.deinit();
 
     for (result.diagnostics.items) |diag| {

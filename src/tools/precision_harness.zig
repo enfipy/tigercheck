@@ -38,13 +38,13 @@ const CaseObservation = struct {
     seen_rules: RuleBitSet,
 };
 
-const JsonDiagnostic = struct {
+const JSONDiagnostic = struct {
     rule_id: []const u8,
 };
 
-const JsonRunOutput = struct {
+const JSONRunOutput = struct {
     schema_version: u32,
-    diagnostics: []const JsonDiagnostic,
+    diagnostics: []const JSONDiagnostic,
 };
 
 const RunStats = struct {
@@ -583,7 +583,7 @@ fn run_tiger_check_case(
     }
 
     const parsed_output = try std.json.parseFromSlice(
-        JsonRunOutput,
+        JSONRunOutput,
         allocator,
         result.stdout,
         .{ .allocate = .alloc_always, .ignore_unknown_fields = true },
@@ -604,7 +604,7 @@ fn run_tiger_check_case(
     };
 }
 
-fn collect_rule_ids(diagnostics: []const JsonDiagnostic, seen_rules: *RuleBitSet) void {
+fn collect_rule_ids(diagnostics: []const JSONDiagnostic, seen_rules: *RuleBitSet) void {
     assert(diagnostics.len <= 4096);
     if (diagnostics.len == 0) {
         return;
