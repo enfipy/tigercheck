@@ -28,6 +28,7 @@ const tb03_copy_api_message =
     "use explicit copy helper (`stdx.copy_disjoint`, `stdx.copy_left`, or `stdx.copy_right`)";
 
 const collect_call_path = call_expr.collect_call_path;
+const append_diag = diagnostics.append;
 
 const PhaseSets = struct {
     green: *std.StringHashMap(void),
@@ -69,10 +70,6 @@ pub const AnalyzeOptions = struct {
     profile: policy.Profile = .strict_core,
     r4_max_function_lines: ?usize = null,
 };
-
-pub fn analyze(allocator: std.mem.Allocator, call_graph: *const graph.CallGraph) !Result {
-    return analyze_with_options(allocator, call_graph, .{});
-}
 
 pub fn analyze_with_options(
     allocator: std.mem.Allocator,
@@ -119,7 +116,7 @@ pub fn analyze_with_options(
         &result,
     );
 
-    try apply_diagnostic_precedence_and_dedup(&result);
+    try diagnostics.apply_precedence_and_dedup(&result);
     try apply_profile_policy(active_policy, &runtime_files, &result);
     try append_pedantic_pipeline_diagnostics(allocator, &result);
 
@@ -164,48 +161,6 @@ fn first_warning_file_path(result: *const Result) ?[]const u8 {
         }
     }
     return null;
-}
-
-fn apply_diagnostic_precedence_and_dedup(result: *Result) !void {
-    try diagnostics.apply_precedence_and_dedup(result);
-}
-
-fn append_diag(
-    result: *Result,
-    severity: Severity,
-    rule_id: rules.Id,
-    file_path: []const u8,
-    message: []const u8,
-) !void {
-    assert(file_path.len > 0);
-    assert(message.len > 0);
-    if (file_path.len == 0) return;
-    if (message.len == 0) return;
-    try diagnostics.append(result, severity, rule_id, file_path, message, .{});
-}
-
-fn append_diag_pair(
-    result: *Result,
-    severity: Severity,
-    first_rule_id: rules.Id,
-    second_rule_id: rules.Id,
-    file_path: []const u8,
-    message: []const u8,
-) !void {
-    assert(file_path.len > 0);
-    assert(message.len > 0);
-    if (file_path.len == 0) return;
-    if (message.len == 0) return;
-    if (first_rule_id == second_rule_id) return;
-    try diagnostics.append_pair(
-        result,
-        severity,
-        first_rule_id,
-        second_rule_id,
-        file_path,
-        message,
-        .{},
-    );
 }
 
 fn seed_green_and_red(
@@ -518,7 +473,7 @@ fn dfs_detect_cycle(
         for (callees.items) |callee| {
             const callee_state = state.get(callee) orelse 0;
             if (callee_state == 1) {
-                try append_diag_pair(
+                try diagnostics.append_pair(
                     result,
                     .critical,
                     .N01_CONTROL_FLOW,
@@ -557,7 +512,7 @@ fn append_first_unbounded_loop_diag(
                 "rewrite with explicit finite upper bound",
             .{facts.function_name},
         );
-        try append_diag_pair(
+        try diagnostics.append_pair(
             result,
             .critical,
             .N02_BOUNDED_LOOPS,
@@ -812,7 +767,7 @@ fn append_memory_phase_diag_for_fact(
             "runtime allocation reaches execution path in `{s}` (mixed GREEN/RED reachability)",
             .{facts.function_name},
         );
-        try append_diag_pair(
+        try diagnostics.append_pair(
             result,
             .critical,
             .N03_STATIC_MEMORY,
@@ -822,13 +777,12 @@ fn append_memory_phase_diag_for_fact(
         );
         return;
     }
-
     const red_msg = try std.fmt.allocPrint(
         allocator,
         "runtime allocation reaches execution path in `{s}` (RED)",
         .{facts.function_name},
     );
-    try append_diag_pair(
+    try diagnostics.append_pair(
         result,
         .critical,
         .N03_STATIC_MEMORY,
@@ -1173,7 +1127,7 @@ fn append_metric_quality_diagnostics(
                 "Function exceeds Tiger Style size limit in `{s}` ({d} > {d} lines).",
                 .{ m.function_name, m.logical_line_count, max_function_lines },
             );
-            try append_diag_pair(
+            try diagnostics.append_pair(
                 result,
                 .warning,
                 .N04_FUNCTION_SIZE,
@@ -2855,7 +2809,7 @@ fn emit_locality_gap_diag(
             "before first use; narrow declaration scope",
         .{ candidate.name, fn_name, gap },
     );
-    try append_diag_pair(
+    try diagnostics.append_pair(
         result,
         .warning,
         .N06_SCOPE_MINIMIZATION,
@@ -3335,7 +3289,7 @@ fn detect_implicit_call_style_violations(
     assert(call_node == .root or @intFromEnum(call_node) < ctx.tree.nodes.len);
     assert(fn_expr == .root or @intFromEnum(fn_expr) < ctx.tree.nodes.len);
     if (is_page_allocator_call(ctx.tree, fn_expr)) {
-        try append_diag_pair(
+        try diagnostics.append_pair(
             ctx.result,
             .warning,
             .N03_STATIC_MEMORY,
@@ -3459,7 +3413,7 @@ fn walk_implicit_while(
         );
     }
     if (is_literal_true(tree, full.ast.cond_expr)) {
-        try append_diag_pair(
+        try diagnostics.append_pair(
             result,
             .warning,
             .N02_BOUNDED_LOOPS,

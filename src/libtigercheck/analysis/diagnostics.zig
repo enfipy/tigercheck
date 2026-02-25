@@ -46,19 +46,12 @@ pub const Result = struct {
     }
 };
 
-pub const AppendOptions = struct {
-    line: ?u32 = null,
-    column: ?u32 = null,
-    hint: ?[]const u8 = null,
-};
-
 pub fn append(
     result: *Result,
     severity: Severity,
     rule_id: rules.Id,
     file_path: []const u8,
     message: []const u8,
-    options: AppendOptions,
 ) !void {
     assert(file_path.len > 0);
     assert(message.len > 0);
@@ -72,8 +65,8 @@ pub fn append(
             rule_id,
             file_path,
             message,
-            options.line,
-            options.column,
+            null,
+            null,
         )) {
             return;
         }
@@ -84,9 +77,9 @@ pub fn append(
         .rule_id = rule_id,
         .file_path = file_path,
         .message = message,
-        .line = options.line,
-        .column = options.column,
-        .hint = options.hint orelse default_hint_for_rule(rule_id),
+        .line = null,
+        .column = null,
+        .hint = default_hint_for_rule(rule_id),
     });
     if (severity == .critical) {
         result.critical_count += 1;
@@ -102,15 +95,14 @@ pub fn append_pair(
     second_rule_id: rules.Id,
     file_path: []const u8,
     message: []const u8,
-    options: AppendOptions,
 ) !void {
     assert(file_path.len > 0);
     assert(message.len > 0);
     if (file_path.len == 0) return;
     if (message.len == 0) return;
     if (first_rule_id == second_rule_id) return;
-    try append(result, severity, first_rule_id, file_path, message, options);
-    try append(result, severity, second_rule_id, file_path, message, options);
+    try append(result, severity, first_rule_id, file_path, message);
+    try append(result, severity, second_rule_id, file_path, message);
 }
 
 pub fn apply_precedence_and_dedup(result: *Result) !void {
