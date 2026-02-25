@@ -10,7 +10,7 @@ pub fn build(b: *std.Build) void {
         "Style profile: strict_core or tigerbeetle_repo",
     ) orelse "strict_core";
     const default_perf_budget_ms: u64 = switch (optimize) {
-        .Debug => 30000,
+        .Debug => 3000,
         .ReleaseSafe, .ReleaseFast, .ReleaseSmall => 200,
     };
     const perf_budget_ms = b.option(

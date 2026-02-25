@@ -189,6 +189,7 @@ Repository CI workflow (`.github/workflows/safety.yml`) runs:
 - `./zig/zig build test`
 - `./zig/zig build precision-check`
 - `./zig/zig build check-strict -Dstyle-path=./src/libtigercheck`
+- `./zig/zig build --release=fast run -- ./src`
 
 If you see stdlib errors like `invalid builtin function: '@Type'`, your Zig binary and lib directory are out of sync. Use `./zig/zig ...` to force a matched toolchain.
 

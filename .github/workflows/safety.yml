@@ -27,6 +27,9 @@ jobs:
       - name: Strict conformance
         run: ./zig/zig build check-strict -Dstyle-path=./src/libtigercheck
 
+      - name: Pedantic source scan
+        run: ./zig/zig build --release=fast run -- ./src
+
       - name: Upload precision report
         if: always()
         uses: actions/upload-artifact@v4
