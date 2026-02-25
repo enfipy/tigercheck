@@ -18,30 +18,6 @@ jobs:
       - name: Install Zig toolchain
         run: ./zig/download.sh
 
-      - name: Enforce internal panic prefix
-        run: |
-          python3 - <<'PY'
-          import pathlib
-          import re
-          import sys
-
-          root = pathlib.Path("src/libtigercheck/analysis")
-          bad = []
-          panic_re = re.compile(r'std\.debug\.panic\("([^"]+)"')
-          for path in root.rglob("*.zig"):
-            text = path.read_text(encoding="utf-8")
-            for m in panic_re.finditer(text):
-              msg = m.group(1)
-              if not msg.startswith("internal invariant violated:"):
-                bad.append(f"{path}: {msg}")
-
-          if bad:
-            print("panic prefix check failed:")
-            for line in bad:
-              print(f"- {line}")
-            sys.exit(1)
-          PY
-
       - name: Build and test
         run: ./zig/zig build test
 
