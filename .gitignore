@@ -16,3 +16,7 @@ zig-out/
 !/zig/download.win.ps1
 !/zig/download.ps1
 !/zig/download.sh
+
+# Don't look at this
+TIGER_STYLE.md
+/tasks/

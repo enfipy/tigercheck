@@ -67,7 +67,7 @@ pub const SemanticIndex = struct {
 };
 
 fn cache_put_failed(err: anyerror) noreturn {
-    std.debug.panic("semantic cache put failed: {}", .{err});
+    std.debug.panic("internal invariant violated: semantic cache put failed: {}", .{err});
 }
 
 const SymbolLookupCtx = struct {
@@ -369,5 +369,5 @@ fn param_type_is_mutable_pointer(tree: *const Ast, type_expr: Ast.Node.Index) bo
 }
 
 fn walk_failed(err: anyerror) noreturn {
-    std.debug.panic("semantic walk failed: {}", .{err});
+    std.debug.panic("internal invariant violated: semantic walk failed: {}", .{err});
 }

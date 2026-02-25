@@ -3,6 +3,11 @@ permissions: {}
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to validate (x.y.z)"
+        required: true
+        type: string
   workflow_run:
     workflows: ["Release"]
     types:
@@ -24,6 +29,6 @@ jobs:
           fetch-depth: 0
 
       - run: ./zig/download.sh
-      - run: ./zig/zig build release-validate
+      - run: ./zig/zig build release-validate -- --tag "${{ github.event.inputs.tag }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

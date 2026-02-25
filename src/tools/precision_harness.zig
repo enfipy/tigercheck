@@ -38,6 +38,15 @@ const CaseObservation = struct {
     seen_rules: RuleBitSet,
 };
 
+const JSONDiagnostic = struct {
+    rule_id: []const u8,
+};
+
+const JSONRunOutput = struct {
+    schema_version: u32,
+    diagnostics: []const JSONDiagnostic,
+};
+
 const RunStats = struct {
     evaluated_cases: u32 = 0,
     skipped_cases: u32 = 0,
@@ -559,6 +568,8 @@ fn run_tiger_check_case(
     var argv = std.array_list.Managed([]const u8).init(allocator);
     defer argv.deinit();
     try argv.append(tiger_check_bin);
+    try argv.append("--format");
+    try argv.append("json");
     if (profile_for_test_file(file_path)) |profile_name| {
         try argv.append("--profile");
         try argv.append(profile_name);
@@ -571,9 +582,16 @@ fn run_tiger_check_case(
         allocator.free(result.stderr);
     }
 
+    const parsed_output = try std.json.parseFromSlice(
+        JSONRunOutput,
+        allocator,
+        result.stdout,
+        .{ .allocate = .alloc_always, .ignore_unknown_fields = true },
+    );
+    defer parsed_output.deinit();
+
     var seen_rules = RuleBitSet.initEmpty();
-    collect_rule_ids(result.stdout, &seen_rules);
-    collect_rule_ids(result.stderr, &seen_rules);
+    collect_rule_ids(parsed_output.value.diagnostics, &seen_rules);
 
     const exited_ok = switch (result.term) {
         .exited => |code| code == 0,
@@ -586,31 +604,16 @@ fn run_tiger_check_case(
     };
 }
 
-fn collect_rule_ids(output: []const u8, seen_rules: *RuleBitSet) void {
-    assert(output.len <= 4 * 1024 * 1024);
-    assert(std.mem.indexOfScalar(u8, output, 0) == null);
-    if (output.len == 0) {
+fn collect_rule_ids(diagnostics: []const JSONDiagnostic, seen_rules: *RuleBitSet) void {
+    assert(diagnostics.len <= 4096);
+    if (diagnostics.len == 0) {
         return;
     }
 
-    for (all_rule_ids) |rule_id| {
-        if (output_mentions_rule_id(output, rule_id)) {
-            seen_rules.set(@intFromEnum(rule_id));
-        }
+    for (diagnostics) |diag| {
+        const rule_id = parse_rule_id(diag.rule_id) orelse continue;
+        seen_rules.set(@intFromEnum(rule_id));
     }
-}
-
-fn output_mentions_rule_id(output: []const u8, rule_id: rules.Id) bool {
-    assert(output.len <= 4 * 1024 * 1024);
-    if (output.len == 0) {
-        return false;
-    }
-
-    var needle_buf: [64]u8 = undefined;
-    const needle = std.fmt.bufPrint(&needle_buf, "[{s}]", .{rules.id_string(rule_id)}) catch {
-        return false;
-    };
-    return std.mem.indexOf(u8, output, needle) != null;
 }
 
 fn apply_case_observation(

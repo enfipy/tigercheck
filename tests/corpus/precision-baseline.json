@@ -5,12 +5,12 @@
     {
       "rule_id": "N01_CONTROL_FLOW",
       "prefix": "N01",
-      "positives": 1,
-      "negatives": 1,
-      "tp": 1,
+      "positives": 2,
+      "negatives": 2,
+      "tp": 2,
       "fp": 0,
       "fn_count": 0,
-      "tn": 1,
+      "tn": 2,
       "precision": 1,
       "recall": 1,
       "fp_cases": [],
@@ -551,12 +551,12 @@
     {
       "rule_id": "TB04_CONTEXT_BUNDLE",
       "prefix": "TB04",
-      "positives": 1,
-      "negatives": 1,
-      "tp": 1,
+      "positives": 2,
+      "negatives": 2,
+      "tp": 2,
       "fp": 0,
       "fn_count": 0,
-      "tn": 1,
+      "tn": 2,
       "precision": 1,
       "recall": 1,
       "fp_cases": [],
@@ -578,14 +578,14 @@
     }
   ],
   "totals": {
-    "evaluated_cases": 114,
+    "evaluated_cases": 118,
     "skipped_cases": 0,
-    "positives": 62,
-    "negatives": 52,
-    "tp": 62,
+    "positives": 64,
+    "negatives": 54,
+    "tp": 64,
     "fp": 0,
     "fn_count": 0,
-    "tn": 52,
+    "tn": 54,
     "contract_failures": 0
   }
 }

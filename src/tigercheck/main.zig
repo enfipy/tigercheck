@@ -9,12 +9,51 @@ const HistogramEntry = struct {
     count: HistogramCount,
 };
 
+const OutputFormat = enum {
+    text,
+    json,
+};
+
 const CliOptions = struct {
     dump_graph: bool,
     explain_policy: bool,
     explain_strict: bool,
+    output_format: OutputFormat,
     profile: libtigercheck.policy.Profile,
     target_path: []const u8,
+};
+
+const JSONDiagnostic = struct {
+    severity: libtigercheck.analysis.Severity,
+    rule_id: []const u8,
+    summary: []const u8,
+    file_path: []const u8,
+    message: []const u8,
+    line: ?u32,
+    column: ?u32,
+    hint: ?[]const u8,
+    effective_class: ?libtigercheck.policy.CodeClass,
+    effective_action: ?libtigercheck.policy.Action,
+};
+
+const JSONRunOutput = struct {
+    schema_version: u32,
+    policy_profile: []const u8,
+    policy_applied: bool,
+    warning_count: usize,
+    critical_count: usize,
+    suppressed_count: usize,
+    downgraded_count: usize,
+    diagnostics: []const JSONDiagnostic,
+};
+
+const OwnedJSONRunOutput = struct {
+    diagnostics: std.array_list.Managed(JSONDiagnostic),
+    value: JSONRunOutput,
+
+    fn deinit(self: *OwnedJSONRunOutput) void {
+        self.diagnostics.deinit();
+    }
 };
 
 const SourceLocation = struct {
@@ -142,6 +181,15 @@ pub fn main(init: std.process.Init) !void {
     var location_cache = LocationCache.init(allocator);
     defer location_cache.deinit();
 
+    if (cli.output_format == .json) {
+        try print_json_run_output(allocator, stdout, &location_cache, result);
+        try stdout.flush();
+        if (result.critical_count > 0 or result.warning_count > 0) {
+            std.process.exit(1);
+        }
+        return;
+    }
+
     for (result.diagnostics.items) |diag| {
         try print_diagnostic(stdout, &location_cache, diag);
     }
@@ -175,57 +223,115 @@ fn print_usage() void {
     std.debug.print(
         "usage: tigercheck [--dump-graph] [--explain-policy] " ++
             "[--explain-strict] " ++
+            "[--format text|json] " ++
             "[--profile strict_core|tigerbeetle_repo] <path>\n",
         .{},
     );
 }
 
 fn parse_cli_options(init: std.process.Init) !CliOptions {
-    var args_arena = std.heap.ArenaAllocator.init(init.gpa);
-    defer args_arena.deinit();
-    const argv = try init.minimal.args.toSlice(args_arena.allocator());
-    const arg_count = argv.len;
-    assert(arg_count > 0);
+    var args = try init.minimal.args.iterateAllocator(init.gpa);
+    defer args.deinit();
+    const argv0 = args.next() orelse return error.InvalidArguments;
+    assert(argv0.len > 0);
 
-    var option_flags: u8 = 0;
-    var profile: libtigercheck.policy.Profile = .strict_core;
-    var target_path: ?[]const u8 = null;
-
-    var arg_index: usize = 1;
-    while (arg_index < arg_count) : (arg_index += 1) {
-        const kind = cli_arg_kind(argv[arg_index]);
-        switch (kind) {
-            .unknown => return error.InvalidArguments,
-            .profile => {
-                arg_index += 1;
-                if (arg_index >= arg_count) return error.InvalidArguments;
-                profile = parse_profile_arg(argv[arg_index]) orelse return error.InvalidArguments;
-            },
-            .positional => {
-                target_path = try parse_positional_arg(target_path, argv[arg_index]);
-            },
-            .dump_graph, .explain_policy, .explain_strict => {
-                option_flags |= cli_flag_bit(kind);
-            },
-        }
+    var state = CliParseState{};
+    const max_cli_args: u16 = 64;
+    var parsed_all = false;
+    var step: u16 = 0;
+    while (step < max_cli_args) : (step += 1) {
+        const arg = args.next() orelse {
+            parsed_all = true;
+            break;
+        };
+        try parse_cli_token(arg, &args, &state);
+    }
+    if (!parsed_all) {
+        return error.InvalidArguments;
     }
 
-    const resolved_target = target_path orelse return error.InvalidArguments;
+    const resolved_target = state.target_path orelse return error.InvalidArguments;
     assert(std.mem.indexOfScalar(u8, resolved_target, 0) == null);
 
     return .{
-        .dump_graph = (option_flags & (1 << 0)) != 0,
-        .explain_policy = (option_flags & (1 << 1)) != 0,
-        .explain_strict = (option_flags & (1 << 2)) != 0,
-        .profile = profile,
+        .dump_graph = state.dump_graph,
+        .explain_policy = state.explain_policy,
+        .explain_strict = state.explain_strict,
+        .output_format = state.output_format,
+        .profile = state.profile,
         .target_path = resolved_target,
     };
+}
+
+const CliParseState = struct {
+    dump_graph: bool = false,
+    explain_policy: bool = false,
+    explain_strict: bool = false,
+    output_format: OutputFormat = .text,
+    profile: libtigercheck.policy.Profile = .strict_core,
+    target_path: ?[]const u8 = null,
+};
+
+fn parse_cli_token(
+    arg: []const u8,
+    args: *std.process.Args.Iterator,
+    state: *CliParseState,
+) !void {
+    assert(arg.len > 0);
+    assert(state.profile == .strict_core or state.profile == .tigerbeetle_repo);
+    if (arg.len == 0) return error.InvalidArguments;
+
+    const kind = cli_arg_kind(arg);
+    if (kind == .profile) {
+        const value = args.next() orelse return error.InvalidArguments;
+        state.profile = parse_profile_arg(value) orelse return error.InvalidArguments;
+        return;
+    }
+    if (kind == .format) {
+        const value = args.next() orelse return error.InvalidArguments;
+        state.output_format = parse_output_format_arg(value) orelse
+            return error.InvalidArguments;
+        return;
+    }
+    if (kind == .positional) {
+        state.target_path = try parse_positional_arg(state.target_path, arg);
+        return;
+    }
+    try apply_simple_cli_flag(kind, state);
+}
+
+fn apply_simple_cli_flag(kind: CliArgKind, state: *CliParseState) !void {
+    assert(state.profile == .strict_core or state.profile == .tigerbeetle_repo);
+    if (kind == .dump_graph) {
+        state.dump_graph = true;
+        return;
+    }
+    if (kind == .explain_policy) {
+        state.explain_policy = true;
+        return;
+    }
+    if (kind == .explain_strict) {
+        state.explain_strict = true;
+        return;
+    }
+    if (kind == .unknown) {
+        return error.InvalidArguments;
+    }
+    return error.InvalidArguments;
 }
 
 fn parse_profile_arg(profile_name: []const u8) ?libtigercheck.policy.Profile {
     assert(profile_name.len > 0);
     if (profile_name.len == 0) return null;
     return libtigercheck.policy.parse_profile_name(profile_name);
+}
+
+fn parse_output_format_arg(value: []const u8) ?OutputFormat {
+    assert(value.len > 0);
+    if (value.len == 0) return null;
+    if (std.mem.eql(u8, value, "text")) return .text;
+    if (std.mem.eql(u8, value, "json")) return .json;
+    return null;
 }
 
 fn parse_positional_arg(target_path: ?[]const u8, arg: []const u8) !?[]const u8 {
@@ -235,19 +341,11 @@ fn parse_positional_arg(target_path: ?[]const u8, arg: []const u8) !?[]const u8 
     return error.InvalidArguments;
 }
 
-fn cli_flag_bit(kind: CliArgKind) u8 {
-    return switch (kind) {
-        .dump_graph => 1 << 0,
-        .explain_policy => 1 << 1,
-        .explain_strict => 1 << 2,
-        .profile, .positional, .unknown => 0,
-    };
-}
-
 const CliArgKind = enum {
     dump_graph,
     explain_policy,
     explain_strict,
+    format,
     profile,
     positional,
     unknown,
@@ -260,6 +358,7 @@ fn cli_arg_kind(arg: []const u8) CliArgKind {
     if (std.mem.eql(u8, arg, "--dump-graph")) return .dump_graph;
     if (std.mem.eql(u8, arg, "--explain-policy")) return .explain_policy;
     if (std.mem.eql(u8, arg, "--explain-strict")) return .explain_strict;
+    if (std.mem.eql(u8, arg, "--format")) return .format;
     if (std.mem.eql(u8, arg, "--profile")) return .profile;
     if (std.mem.startsWith(u8, arg, "--")) return .unknown;
     return .positional;
@@ -430,37 +529,15 @@ fn print_diagnostic(
 
     const id = rules.id_string(diag.rule_id);
     const requirement = rules.summary(diag.rule_id);
-    if (diag.line) |line| {
-        const column = diag.column orelse 1;
+    if (resolved_diagnostic_location(location_cache, diag)) |loc| {
         try stdout.print(
             "[{s}] {s}:{d}:{d} [{s}] {s}; {s}\n",
-            .{ severity_str, diag.file_path, line, column, id, requirement, diag.message },
+            .{ severity_str, diag.file_path, loc.line, loc.column, id, requirement, diag.message },
         );
         if (diag.hint) |hint| {
             try stdout.print("        rewrite: {s}\n", .{hint});
         }
         return;
-    }
-
-    if (extract_subject(diag.message)) |subject| {
-        if (location_cache.function_location(diag.file_path, subject)) |loc| {
-            try stdout.print(
-                "[{s}] {s}:{d}:{d} [{s}] {s}; {s}\n",
-                .{
-                    severity_str,
-                    diag.file_path,
-                    loc.line,
-                    loc.column,
-                    id,
-                    requirement,
-                    diag.message,
-                },
-            );
-            if (diag.hint) |hint| {
-                try stdout.print("        rewrite: {s}\n", .{hint});
-            }
-            return;
-        }
     }
 
     try stdout.print(
@@ -470,6 +547,74 @@ fn print_diagnostic(
     if (diag.hint) |hint| {
         try stdout.print("        rewrite: {s}\n", .{hint});
     }
+}
+
+fn resolved_diagnostic_location(
+    location_cache: *LocationCache,
+    diag: libtigercheck.analysis.Diagnostic,
+) ?SourceLocation {
+    if (diag.line) |line| {
+        return .{ .line = line, .column = diag.column orelse 1 };
+    }
+    if (extract_subject(diag.message)) |subject| {
+        return location_cache.function_location(diag.file_path, subject);
+    }
+    return null;
+}
+
+fn print_json_run_output(
+    allocator: std.mem.Allocator,
+    stdout: *std.Io.Writer,
+    location_cache: *LocationCache,
+    result: libtigercheck.analysis.Result,
+) !void {
+    var owned = try build_json_run_output(allocator, location_cache, result);
+    defer owned.deinit();
+
+    var out: std.Io.Writer.Allocating = .init(allocator);
+    defer out.deinit();
+    try std.json.Stringify.value(owned.value, .{ .whitespace = .indent_2 }, &out.writer);
+    try out.writer.writeAll("\n");
+    try stdout.writeAll(out.written());
+}
+
+fn build_json_run_output(
+    allocator: std.mem.Allocator,
+    location_cache: *LocationCache,
+    result: libtigercheck.analysis.Result,
+) !OwnedJSONRunOutput {
+    var diagnostics = std.array_list.Managed(JSONDiagnostic).init(allocator);
+    errdefer diagnostics.deinit();
+
+    for (result.diagnostics.items) |diag| {
+        const loc = resolved_diagnostic_location(location_cache, diag);
+        try diagnostics.append(.{
+            .severity = diag.severity,
+            .rule_id = rules.id_string(diag.rule_id),
+            .summary = rules.summary(diag.rule_id),
+            .file_path = diag.file_path,
+            .message = diag.message,
+            .line = if (loc) |v| v.line else null,
+            .column = if (loc) |v| v.column else null,
+            .hint = diag.hint,
+            .effective_class = diag.effective_class,
+            .effective_action = diag.effective_action,
+        });
+    }
+
+    return .{
+        .diagnostics = diagnostics,
+        .value = .{
+            .schema_version = 1,
+            .policy_profile = result.policy_profile,
+            .policy_applied = result.policy_applied,
+            .warning_count = result.warning_count,
+            .critical_count = result.critical_count,
+            .suppressed_count = result.suppressed_count,
+            .downgraded_count = result.downgraded_count,
+            .diagnostics = diagnostics.items,
+        },
+    };
 }
 
 fn offset_to_line_col(source: []const u8, offset: u32) SourceLocation {
@@ -673,5 +818,12 @@ test "diagnostic line snapshot" {
 
 test "cli arg kind rejects unknown flags" {
     try std.testing.expectEqual(CliArgKind.unknown, cli_arg_kind("--unknownz"));
+    try std.testing.expectEqual(CliArgKind.format, cli_arg_kind("--format"));
     try std.testing.expectEqual(CliArgKind.positional, cli_arg_kind("src"));
+}
+
+test "parse output format arg" {
+    try std.testing.expectEqual(OutputFormat.text, parse_output_format_arg("text").?);
+    try std.testing.expectEqual(OutputFormat.json, parse_output_format_arg("json").?);
+    try std.testing.expect(parse_output_format_arg("yaml") == null);
 }

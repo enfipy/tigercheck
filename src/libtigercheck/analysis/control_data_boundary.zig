@@ -44,7 +44,7 @@ fn collect_facts(
     if (node == .root or @intFromEnum(node) >= tree.nodes.len) return;
     var ctx = ControlDataBoundaryVisitCtx{ .role_index = role_index, .facts = facts };
     ast_walk.walk(tree, node, &ctx, visit_node) catch |err| {
-        std.debug.panic("plane-boundary walk failed: {}", .{err});
+        std.debug.panic("internal invariant violated: plane-boundary walk failed: {}", .{err});
     };
 }
 

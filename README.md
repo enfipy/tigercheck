@@ -13,6 +13,16 @@ The goal of tigercheck is to turn NASA Power of 10, TigerStyle, and TigerBeetle 
 - Policy-aware profiles: run strict core or TigerBeetle repository mode.
 - Precision gates: track FP/FN deltas per rule against a committed baseline.
 
+## Failure Model
+
+tigercheck follows a strict TigerBeetle-style correctness boundary:
+
+- Internal analyzer invariant violations are programmer bugs and fail fast (`panic`/`unreachable`).
+- Code-under-analysis violations are emitted as diagnostics with stable rule IDs.
+- Invalid CLI/user input is handled as regular usage errors (not internal invariant panics).
+
+If you hit a panic with message prefix `internal invariant violated:`, report it as an analyzer bug with the command, target path, and the panic text.
+
 ## Quick Start
 
 Requires Zig `0.16.0-dev`.
@@ -40,6 +50,12 @@ Diagnostic shape:
 ```text
 [CRITICAL] src/foo.zig:88:17 [N02_BOUNDED_LOOPS] all loops must have static bounds; loop bound depends on runtime input
         rewrite: clamp bound with explicit max and assert the cap
+```
+
+Machine-readable output:
+
+```bash
+./zig/zig build run -- --format json ./src
 ```
 
 ## Unified Rule Catalog
@@ -131,6 +147,16 @@ CLI diagnostics use the IDs below. This is the canonical catalog for NASA, Tiger
   - `-Dstyle-profile=strict_core|tigerbeetle_repo`
   - `-Dperf-budget-ms=<ms>` (default: `30000` in Debug, `200` in Release*)
 
+Corpus audit options:
+
+- `./zig/zig build corpus-audit -- tests/corpus --min-cases-per-kind 2`
+- Add `--strict-min-cases` to fail on minimum-depth coverage violations.
+
+Perf benchmark options:
+
+- `./zig/zig build bench -- --runs 5`
+- `./zig/zig build bench -- --runs 5 --json`
+
 ## CI and Quality Gates
 
 ```yaml
@@ -157,6 +183,14 @@ Core gates:
 - `./zig/zig build precision-check` enforces rule-level FP/FN deltas vs `tests/corpus/precision-baseline.json`.
 - `./zig/zig build check-strict` enforces strict-core conformance plus perf budget checks.
 
+Repository CI workflow (`.github/workflows/safety.yml`) runs:
+
+- `./zig/download.sh`
+- `./zig/zig build test`
+- `./zig/zig build precision-check`
+- `./zig/zig build check-strict -Dstyle-path=./src/libtigercheck`
+- `./zig/zig build --release=fast run -- ./src`
+
 If you see stdlib errors like `invalid builtin function: '@Type'`, your Zig binary and lib directory are out of sync. Use `./zig/zig ...` to force a matched toolchain.
 
 ## Conformance Roadmap
@@ -168,3 +202,27 @@ tigercheck is focused on one outcome: strict, deterministic Zig conformance in C
 - Precision tracking: keep baseline-driven FP/FN regression gates for every rule.
 - Determinism and performance: hold strict and bench lanes stable with release headroom.
 - CI UX: keep local and CI gates identical, concise, and reproducible.
+
+## Release Operations
+
+Release tooling is scripted in `src/tools/release.zig` and enforces deterministic inputs:
+
+- source SHA (`--sha`, defaults to `git rev-parse HEAD`)
+- fixed target order (`x86_64-linux`, `aarch64-linux`, `x86_64-windows`, `aarch64-macos`)
+- mandatory quality gates (`test`, `precision-check`, `check-strict`)
+- metadata artifacts (`RELEASE_METADATA`, `RELEASE_NOTES.md`, `SHA256SUMS`)
+
+Local dry-run (build + package + checksums + metadata, no publish):
+
+- `./zig/zig build release -- --version 0.1.0 --dry-run`
+
+Release validation:
+
+- latest release: `./zig/zig build release-validate`
+- specific tag: `./zig/zig build release-validate -- --tag 0.1.0`
+
+Recovery playbook:
+
+1. Draft created but assets missing: rerun release workflow with the same version after deleting the incomplete draft release.
+2. Checksum mismatch: stop publication, rebuild from the same source SHA, and compare `SHA256SUMS` before re-upload.
+3. Post-release validation failure: keep release tagged but publish a follow-up patch release with corrected artifacts and validation evidence.

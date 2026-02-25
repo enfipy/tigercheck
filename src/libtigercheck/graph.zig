@@ -60,8 +60,12 @@ pub const CallGraph = struct {
 
     fn add_node(self: *CallGraph, node_name: []const u8) !void {
         const allocator = self.arena.allocator();
-        const key = try allocator.dupe(u8, node_name);
-        try self.nodes.put(allocator, key, {});
+        const gop = try self.nodes.getOrPut(allocator, node_name);
+        if (gop.found_existing) {
+            return;
+        }
+        gop.key_ptr.* = try allocator.dupe(u8, node_name);
+        gop.value_ptr.* = {};
     }
 
     fn add_edge(self: *CallGraph, caller: []const u8, callee: []const u8) !void {
@@ -76,18 +80,41 @@ pub const CallGraph = struct {
     }
 
     pub fn dump_dot(self: *const CallGraph, writer: anytype) !void {
-        try writer.writeAll("digraph call_graph {\n");
+        var sorted_nodes = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
+        defer sorted_nodes.deinit();
+        var sorted_edges = std.array_list.Managed([]const u8).init(std.heap.page_allocator);
+        defer sorted_edges.deinit();
 
         var node_iter = self.nodes.keyIterator();
         while (node_iter.next()) |node_name| {
-            try writer.print("    \"{s}\";\n", .{node_name.*});
+            try sorted_nodes.append(node_name.*);
         }
+        std.mem.sort([]const u8, sorted_nodes.items, {}, struct {
+            fn lt(_: void, lhs: []const u8, rhs: []const u8) bool {
+                return std.mem.order(u8, lhs, rhs) == .lt;
+            }
+        }.lt);
 
         var edge_iter = self.edges.keyIterator();
         while (edge_iter.next()) |edge| {
-            const sep = std.mem.indexOf(u8, edge.*, "->") orelse continue;
-            const caller = edge.*[0..sep];
-            const callee = edge.*[sep + 2 ..];
+            try sorted_edges.append(edge.*);
+        }
+        std.mem.sort([]const u8, sorted_edges.items, {}, struct {
+            fn lt(_: void, lhs: []const u8, rhs: []const u8) bool {
+                return std.mem.order(u8, lhs, rhs) == .lt;
+            }
+        }.lt);
+
+        try writer.writeAll("digraph call_graph {\n");
+
+        for (sorted_nodes.items) |node_name| {
+            try writer.print("    \"{s}\";\n", .{node_name});
+        }
+
+        for (sorted_edges.items) |edge| {
+            const sep = std.mem.indexOf(u8, edge, "->") orelse continue;
+            const caller = edge[0..sep];
+            const callee = edge[sep + 2 ..];
             try writer.print("    \"{s}\" -> \"{s}\";\n", .{ caller, callee });
         }
 
@@ -227,7 +254,6 @@ fn scan_root_decls(
                 const name_token = proto.name_token orelse continue;
                 const name = module.ast.tokenSlice(name_token);
                 const canonical = try std.fmt.allocPrint(arena, "{s}::{s}", .{ module.path, name });
-                const key = try std.fmt.allocPrint(arena, "{s}::{s}", .{ module.path, name });
 
                 try indexes.functions.append(.{
                     .canonical_name = canonical,
@@ -238,7 +264,7 @@ fn scan_root_decls(
                     .ast_index = ast_index,
                 });
 
-                try indexes.fn_by_file_name.put(key, canonical);
+                try indexes.fn_by_file_name.put(canonical, canonical);
             },
             .global_var_decl,
             .local_var_decl,
@@ -361,11 +387,6 @@ fn collect_struct_methods(
             "{s}::{s}.{s}",
             .{ module.path, type_name, method_name },
         );
-        const key = try std.fmt.allocPrint(
-            arena,
-            "{s}::{s}.{s}",
-            .{ module.path, type_name, method_name },
-        );
 
         try indexes.functions.append(.{
             .canonical_name = canonical,
@@ -375,7 +396,7 @@ fn collect_struct_methods(
             .body_node = null,
             .ast_index = ast_index,
         });
-        try indexes.fn_by_file_owner_name.put(key, canonical);
+        try indexes.fn_by_file_owner_name.put(canonical, canonical);
     }
 }
 

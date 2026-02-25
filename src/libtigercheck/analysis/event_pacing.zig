@@ -50,7 +50,7 @@ fn collect_loop_pacing_facts(
     if (node == .root or @intFromEnum(node) >= tree.nodes.len) return;
     var ctx = LoopPacingVisitCtx{ .role_index = role_index, .facts = facts };
     ast_walk.walk(tree, node, &ctx, loop_pacing_visit_node) catch |err| {
-        std.debug.panic("loop-pacing walk failed: {}", .{err});
+        std.debug.panic("internal invariant violated: loop-pacing walk failed: {}", .{err});
     };
 }
 
