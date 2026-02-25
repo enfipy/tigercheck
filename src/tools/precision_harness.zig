@@ -570,10 +570,6 @@ fn run_tiger_check_case(
     try argv.append(tiger_check_bin);
     try argv.append("--format");
     try argv.append("json");
-    if (profile_for_test_file(file_path)) |profile_name| {
-        try argv.append("--profile");
-        try argv.append(profile_name);
-    }
     try argv.append(file_path);
 
     const result = try std.process.run(allocator, io, .{ .argv = argv.items });
@@ -1004,17 +1000,6 @@ fn find_rule_report(reports: []const RuleReport, rule_id: []const u8) ?*const Ru
         if (std.mem.eql(u8, entry.rule_id, rule_id)) {
             return entry;
         }
-    }
-    return null;
-}
-
-fn profile_for_test_file(file_path: []const u8) ?[]const u8 {
-    assert(file_path.len > 0);
-    if (file_path.len == 0) {
-        return null;
-    }
-    if (corpus_common.is_tigerbeetle_corpus_file(file_path)) {
-        return "tigerbeetle_repo";
     }
     return null;
 }

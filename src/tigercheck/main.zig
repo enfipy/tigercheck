@@ -19,7 +19,6 @@ const CliOptions = struct {
     explain_policy: bool,
     explain_strict: bool,
     output_format: OutputFormat,
-    profile: libtigercheck.policy.Profile,
     target_path: []const u8,
 };
 
@@ -142,9 +141,10 @@ const LocationCache = struct {
 
     fn file_index(self: *LocationCache, file_path: []const u8) !*FileFunctionIndex {
         const gop = try self.by_file.getOrPut(file_path);
-        if (!gop.found_existing) {
-            gop.value_ptr.* = try FileFunctionIndex.init(self.allocator, file_path);
+        if (gop.found_existing) {
+            return gop.value_ptr;
         }
+        gop.value_ptr.* = try FileFunctionIndex.init(self.allocator, file_path);
         return gop.value_ptr;
     }
 };
@@ -172,9 +172,7 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    var result = try libtigercheck.analysis.analyze_with_options(allocator, &call_graph, .{
-        .profile = cli.profile,
-    });
+    var result = try libtigercheck.analysis.analyze_with_options(allocator, &call_graph, .{});
     defer result.deinit();
     assert(result.diagnostics.items.len == result.warning_count + result.critical_count);
 
@@ -224,7 +222,7 @@ fn print_usage() void {
         "usage: tigercheck [--dump-graph] [--explain-policy] " ++
             "[--explain-strict] " ++
             "[--format text|json] " ++
-            "[--profile strict_core|tigerbeetle_repo] <path>\n",
+            "<path>\n",
         .{},
     );
 }
@@ -258,7 +256,6 @@ fn parse_cli_options(init: std.process.Init) !CliOptions {
         .explain_policy = state.explain_policy,
         .explain_strict = state.explain_strict,
         .output_format = state.output_format,
-        .profile = state.profile,
         .target_path = resolved_target,
     };
 }
@@ -268,7 +265,6 @@ const CliParseState = struct {
     explain_policy: bool = false,
     explain_strict: bool = false,
     output_format: OutputFormat = .text,
-    profile: libtigercheck.policy.Profile = .strict_core,
     target_path: ?[]const u8 = null,
 };
 
@@ -278,52 +274,40 @@ fn parse_cli_token(
     state: *CliParseState,
 ) !void {
     assert(arg.len > 0);
-    assert(state.profile == .strict_core or state.profile == .tigerbeetle_repo);
+    assert(state.target_path == null or state.target_path.?.len > 0);
     if (arg.len == 0) return error.InvalidArguments;
 
-    const kind = cli_arg_kind(arg);
-    if (kind == .profile) {
-        const value = args.next() orelse return error.InvalidArguments;
-        state.profile = parse_profile_arg(value) orelse return error.InvalidArguments;
-        return;
+    switch (cli_arg_kind(arg)) {
+        .format => {
+            const value = args.next() orelse return error.InvalidArguments;
+            state.output_format = parse_output_format_arg(value) orelse
+                return error.InvalidArguments;
+        },
+        .positional => {
+            state.target_path = try parse_positional_arg(state.target_path, arg);
+        },
+        else => |kind| {
+            try apply_simple_cli_flag(kind, state);
+        },
     }
-    if (kind == .format) {
-        const value = args.next() orelse return error.InvalidArguments;
-        state.output_format = parse_output_format_arg(value) orelse
-            return error.InvalidArguments;
-        return;
-    }
-    if (kind == .positional) {
-        state.target_path = try parse_positional_arg(state.target_path, arg);
-        return;
-    }
-    try apply_simple_cli_flag(kind, state);
 }
 
 fn apply_simple_cli_flag(kind: CliArgKind, state: *CliParseState) !void {
-    assert(state.profile == .strict_core or state.profile == .tigerbeetle_repo);
-    if (kind == .dump_graph) {
-        state.dump_graph = true;
-        return;
-    }
-    if (kind == .explain_policy) {
-        state.explain_policy = true;
-        return;
-    }
-    if (kind == .explain_strict) {
-        state.explain_strict = true;
-        return;
-    }
-    if (kind == .unknown) {
-        return error.InvalidArguments;
-    }
-    return error.InvalidArguments;
-}
+    assert(
+        kind == .dump_graph or
+            kind == .explain_policy or
+            kind == .explain_strict or
+            kind == .unknown,
+    );
+    assert(state.output_format == .text or state.output_format == .json);
 
-fn parse_profile_arg(profile_name: []const u8) ?libtigercheck.policy.Profile {
-    assert(profile_name.len > 0);
-    if (profile_name.len == 0) return null;
-    return libtigercheck.policy.parse_profile_name(profile_name);
+    switch (kind) {
+        .dump_graph => state.dump_graph = true,
+        .explain_policy => state.explain_policy = true,
+        .explain_strict => state.explain_strict = true,
+        .unknown => return error.InvalidArguments,
+        .format, .positional => return error.InvalidArguments,
+    }
 }
 
 fn parse_output_format_arg(value: []const u8) ?OutputFormat {
@@ -346,7 +330,6 @@ const CliArgKind = enum {
     explain_policy,
     explain_strict,
     format,
-    profile,
     positional,
     unknown,
 };
@@ -359,7 +342,6 @@ fn cli_arg_kind(arg: []const u8) CliArgKind {
     if (std.mem.eql(u8, arg, "--explain-policy")) return .explain_policy;
     if (std.mem.eql(u8, arg, "--explain-strict")) return .explain_strict;
     if (std.mem.eql(u8, arg, "--format")) return .format;
-    if (std.mem.eql(u8, arg, "--profile")) return .profile;
     if (std.mem.startsWith(u8, arg, "--")) return .unknown;
     return .positional;
 }
@@ -424,11 +406,11 @@ fn strict_rewrite(rule_id: rules.Id) []const u8 {
 }
 
 fn print_policy_explanation(stdout: *std.Io.Writer, result: libtigercheck.analysis.Result) !void {
-    assert(result.policy_profile.len > 0 or !result.policy_applied);
-    if (!result.policy_applied) {
+    if (result.policy_applied == false) {
         try stdout.writeAll("\nPolicy explanation: policy was not applied\n");
         return;
     }
+    assert(result.policy_profile.len > 0);
 
     const class_counts, const action_counts = collect_policy_histograms(result);
 

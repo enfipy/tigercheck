@@ -67,7 +67,6 @@ pub const Diagnostic = diagnostics.Diagnostic;
 pub const Result = diagnostics.Result;
 
 pub const AnalyzeOptions = struct {
-    profile: policy.Profile = .strict_core,
     r4_max_function_lines: ?usize = null,
 };
 
@@ -76,7 +75,7 @@ pub fn analyze_with_options(
     call_graph: *const graph.CallGraph,
     options: AnalyzeOptions,
 ) !Result {
-    const active_policy = policy.for_profile(options.profile);
+    const active_policy = policy.for_core();
     try policy.validate(active_policy);
     const policy_max_lines = active_policy.default_thresholds.max_function_lines orelse 70;
     const default_max_function_lines: usize =
@@ -101,10 +100,7 @@ pub fn analyze_with_options(
     try collect_runtime_files(&runtime_files, &red);
     try detect_recursion(allocator, call_graph, &result);
 
-    const quality_options = AnalyzeOptions{
-        .profile = options.profile,
-        .r4_max_function_lines = max_function_lines,
-    };
+    const quality_options = AnalyzeOptions{ .r4_max_function_lines = max_function_lines };
     try detect_local_quality_violations(
         allocator,
         call_graph,

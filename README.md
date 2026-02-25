@@ -35,11 +35,11 @@ Requires Zig `0.16.0-dev`.
 Common commands:
 
 ```bash
-# Explain policy suppressions/downgrades
-./zig/zig build run -- --profile tigerbeetle_repo --explain-policy ./tigerbeetle/src
+# Explain policy actions/suppressions
+./zig/zig build run -- --explain-policy ./tigerbeetle/src
 
-# Explain strict-core rewrites
-./zig/zig build run -- --profile strict_core --explain-strict ./src
+# Explain strict rewrites
+./zig/zig build run -- --explain-strict ./src
 
 # Dump call graph
 ./zig/zig build run -- --dump-graph ./src
@@ -133,19 +133,16 @@ CLI diagnostics use the IDs below. This is the canonical catalog for NASA, Tiger
 
 </details>
 
-## Profiles and Build Steps
+## Build Steps
 
-- Profiles:
-  - `strict_core` (default)
-  - `tigerbeetle_repo`
 - Build steps:
   - `./zig/zig build check`
   - `./zig/zig build check-strict`
   - `./zig/zig build bench`
 - Build options:
   - `-Dstyle-path=<path>`
-  - `-Dstyle-profile=strict_core|tigerbeetle_repo`
-  - `-Dperf-budget-ms=<ms>` (default: `30000` in Debug, `200` in Release*)
+  - `-Doff-rules=RULE_ID,RULE_ID`
+  - `-Dperf-budget-ms=<ms>` (default: `3000` in Debug, `200` in Release*)
 
 Corpus audit options:
 

@@ -4,11 +4,11 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
     const style_path = b.option([]const u8, "style-path", "Path for style check") orelse "./src";
-    const style_profile = b.option(
+    const off_rules = b.option(
         []const u8,
-        "style-profile",
-        "Style profile: strict_core or tigerbeetle_repo",
-    ) orelse "strict_core";
+        "off-rules",
+        "Comma-separated rule IDs forced to off action",
+    ) orelse "";
     const default_perf_budget_ms: u64 = switch (optimize) {
         .Debug => 3000,
         .ReleaseSafe, .ReleaseFast, .ReleaseSmall => 200,
@@ -29,11 +29,15 @@ pub fn build(b: *std.Build) void {
         "Fail corpus-audit when prefix depth is below minimum",
     ) orelse false;
 
+    const checker_build_options = b.addOptions();
+    checker_build_options.addOption([]const u8, "off_rules", off_rules);
+
     const libtigercheck_module = b.createModule(.{
         .root_source_file = b.path("src/libtigercheck/libtigercheck.zig"),
         .target = target,
         .optimize = optimize,
     });
+    libtigercheck_module.addOptions("build_options", checker_build_options);
 
     const exe = b.addExecutable(.{
         .name = "tigercheck",
@@ -54,17 +58,13 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     const check_cmd = b.addRunArtifact(exe);
-    check_cmd.addArg("--profile");
-    check_cmd.addArg(style_profile);
     check_cmd.addArg(style_path);
-    const check_step = b.step("check", "Run style check with profile");
+    const check_step = b.step("check", "Run style check");
     check_step.dependOn(&check_cmd.step);
 
     const check_strict_cmd = b.addRunArtifact(exe);
-    check_strict_cmd.addArg("--profile");
-    check_strict_cmd.addArg("strict_core");
     check_strict_cmd.addArg(style_path);
-    const check_strict_step = b.step("check-strict", "Run strict-core style check");
+    const check_strict_step = b.step("check-strict", "Run core style check");
     check_strict_step.dependOn(&check_strict_cmd.step);
 
     const perf_bench = b.addExecutable(.{
@@ -92,6 +92,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         }),
     });
+    lib_tests.root_module.addOptions("build_options", checker_build_options);
     const run_lib_tests = b.addRunArtifact(lib_tests);
 
     const exe_tests = b.addTest(.{

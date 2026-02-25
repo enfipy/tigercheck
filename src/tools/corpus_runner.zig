@@ -104,10 +104,6 @@ fn process_test_file(
     try argv.append(tiger_check_bin);
     try argv.append("--format");
     try argv.append("json");
-    if (profile_for_test_file(file_path)) |profile_name| {
-        try argv.append("--profile");
-        try argv.append(profile_name);
-    }
     try argv.append(file_path);
 
     const result = std.process.run(allocator, io, .{
@@ -172,15 +168,6 @@ fn process_test_file(
 fn test_file_has_expected_prefix(expect_pass: bool, expect_fail: bool) bool {
     if (expect_pass) return true;
     return expect_fail;
-}
-
-fn profile_for_test_file(file_path: []const u8) ?[]const u8 {
-    assert(file_path.len > 0);
-    if (file_path.len == 0) return null;
-    if (corpus_common.is_tigerbeetle_corpus_file(file_path)) {
-        return "tigerbeetle_repo";
-    }
-    return null;
 }
 
 fn observe_test_result(
@@ -452,12 +439,9 @@ fn print_expected_rule_expectation(
     expected: ExpectedRulePrefixes,
     direct_rule_id: ?[]const u8,
 ) !void {
-    assert(direct_rule_id != null or expected.primary != null or expected.fallback == null);
-    if (direct_rule_id == null) {
-        if (expected.primary == null and expected.fallback != null) {
-            return;
-        }
-    }
+    assert(direct_rule_id == null or direct_rule_id.?.len > 0);
+    if (direct_rule_id != null and direct_rule_id.?.len == 0) return;
+
     if (direct_rule_id) |rule_id| {
         assert(rule_id.len > 0);
         if (rule_id.len == 0) return;
@@ -468,8 +452,15 @@ fn print_expected_rule_expectation(
         return;
     }
 
+    assert(expected.primary != null or expected.fallback == null);
+    if (expected.primary == null and expected.fallback != null) return;
+
     const primary = expected.primary orelse return;
+    assert(primary.len > 0);
+    if (primary.len == 0) return;
     if (expected.fallback) |fallback| {
+        assert(fallback.len > 0);
+        if (fallback.len == 0) return;
         try stdout.print(
             "        expected rule prefix: [{s}_ or [{s}_ (not found in diagnostics)\n",
             .{ primary, fallback },
