@@ -5,8 +5,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Optional tag to validate (x.y.z). Defaults to latest release"
-        required: false
+        description: "Release tag to validate (x.y.z)"
+        required: true
         type: string
   workflow_run:
     workflows: ["Release"]
@@ -21,7 +21,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    if: ${{ !(github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -29,14 +28,6 @@ jobs:
           fetch-depth: 0
 
       - run: ./zig/download.sh
-      - name: Validate latest release
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.tag == '' }}
-        run: ./zig/zig build release-validate
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Validate selected release tag
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.tag != '' }}
-        run: ./zig/zig build release-validate -- --tag "${{ inputs.tag }}"
+      - run: ./zig/zig build release-validate -- --tag "${{ github.event.inputs.tag }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

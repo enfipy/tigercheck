@@ -443,7 +443,7 @@ fn finalize_release_args(state: ParseState) !ReleaseArgs {
 
 fn parse_validate_args(arg1: ?[]const u8, arg2: ?[]const u8) !ValidateArgs {
     assert(arg1 == null or arg1.?.len > 0);
-    assert(arg2 == null or arg2.?.len > 0);
+    assert(arg2 == null or arg2.?.len <= 32);
     if (arg1 == null and arg2 == null) {
         return .{ .tag = null };
     }
@@ -454,6 +454,9 @@ fn parse_validate_args(arg1: ?[]const u8, arg2: ?[]const u8) !ValidateArgs {
         // positive invariant
     } else {
         return error.InvalidArguments;
+    }
+    if (arg2.?.len == 0) {
+        return .{ .tag = null };
     }
     if (is_semver(arg2.?)) {
         // positive invariant
