@@ -51,7 +51,7 @@ fn collect_queue_bound_facts(
     if (node == .root or @intFromEnum(node) >= tree.nodes.len) return;
     var ctx = QueueBoundVisitCtx{ .role_index = role_index, .facts = facts };
     ast_walk.walk(tree, node, &ctx, queue_bound_visit_node) catch |err| {
-        std.debug.panic("queue-bound walk failed: {}", .{err});
+        std.debug.panic("internal invariant violated: queue-bound walk failed: {}", .{err});
     };
 }
 

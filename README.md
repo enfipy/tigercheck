@@ -13,6 +13,16 @@ The goal of tigercheck is to turn NASA Power of 10, TigerStyle, and TigerBeetle 
 - Policy-aware profiles: run strict core or TigerBeetle repository mode.
 - Precision gates: track FP/FN deltas per rule against a committed baseline.
 
+## Failure Model
+
+tigercheck follows a strict TigerBeetle-style correctness boundary:
+
+- Internal analyzer invariant violations are programmer bugs and fail fast (`panic`/`unreachable`).
+- Code-under-analysis violations are emitted as diagnostics with stable rule IDs.
+- Invalid CLI/user input is handled as regular usage errors (not internal invariant panics).
+
+If you hit a panic with message prefix `internal invariant violated:`, report it as an analyzer bug with the command, target path, and the panic text.
+
 ## Quick Start
 
 Requires Zig `0.16.0-dev`.
@@ -156,6 +166,13 @@ Core gates:
 - `./zig/zig build test` validates unit coverage + corpus pass/fail contracts.
 - `./zig/zig build precision-check` enforces rule-level FP/FN deltas vs `tests/corpus/precision-baseline.json`.
 - `./zig/zig build check-strict` enforces strict-core conformance plus perf budget checks.
+
+Repository CI workflow (`.github/workflows/safety.yml`) runs:
+
+- `./zig/download.sh`
+- `./zig/zig build test`
+- `./zig/zig build precision-check`
+- `./zig/zig build check-strict -Dstyle-path=./src/libtigercheck`
 
 If you see stdlib errors like `invalid builtin function: '@Type'`, your Zig binary and lib directory are out of sync. Use `./zig/zig ...` to force a matched toolchain.
 
