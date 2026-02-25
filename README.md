@@ -1,10 +1,10 @@
-# tigercheck
+![tigercheck preview](.github/preview.webp)
 
-> WARNING: tigercheck is in the early stages of development, expect interface changes, rules modification, feature additions/removals/modifications.
-
-**Deterministic safety and conformance enforcement for Zig.**
+**TigerCheck - Deterministic safety and conformance enforcement for Zig.**
 
 The goal of tigercheck is to turn NASA Power of 10, TigerStyle, and TigerBeetle guidance into repeatable static checks with stable rule IDs and CI-friendly output.
+
+> WARNING: tigercheck is in the early stages of development, expect interface changes, rules modification, feature additions/removals/modifications.
 
 ## Why tigercheck
 
