@@ -18,6 +18,16 @@ pub fn build(b: *std.Build) void {
         "perf-budget-ms",
         "Perf budget for check-strict/bench (ms)",
     ) orelse default_perf_budget_ms;
+    const corpus_min_cases_per_kind = b.option(
+        u32,
+        "corpus-min-cases-per-kind",
+        "Corpus audit minimum pass/fail cases per rule prefix",
+    ) orelse 1;
+    const corpus_strict_min_cases = b.option(
+        bool,
+        "corpus-strict-min-cases",
+        "Fail corpus-audit when prefix depth is below minimum",
+    ) orelse false;
 
     const libtigercheck_module = b.createModule(.{
         .root_source_file = b.path("src/libtigercheck/libtigercheck.zig"),
@@ -124,9 +134,27 @@ pub fn build(b: *std.Build) void {
 
     const run_corpus_audit = b.addRunArtifact(corpus_audit);
     run_corpus_audit.addArg("tests/corpus");
+    if (corpus_min_cases_per_kind > 1) {
+        run_corpus_audit.addArg("--min-cases-per-kind");
+        run_corpus_audit.addArg(b.fmt("{d}", .{corpus_min_cases_per_kind}));
+    }
+    if (corpus_strict_min_cases) {
+        run_corpus_audit.addArg("--strict-min-cases");
+    }
     const corpus_audit_step = b.step("corpus-audit", "Audit corpus naming and rule coverage");
     corpus_audit_step.dependOn(&run_corpus_audit.step);
     test_step.dependOn(&run_corpus_audit.step);
+
+    const run_corpus_audit_strict = b.addRunArtifact(corpus_audit);
+    run_corpus_audit_strict.addArg("tests/corpus");
+    run_corpus_audit_strict.addArg("--min-cases-per-kind");
+    run_corpus_audit_strict.addArg("2");
+    run_corpus_audit_strict.addArg("--strict-min-cases");
+    const corpus_audit_strict_step = b.step(
+        "corpus-audit-strict",
+        "Audit corpus with strict minimum per-prefix depth",
+    );
+    corpus_audit_strict_step.dependOn(&run_corpus_audit_strict.step);
 
     const precision_harness = b.addExecutable(.{
         .name = "precision-harness",

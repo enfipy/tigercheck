@@ -147,6 +147,16 @@ CLI diagnostics use the IDs below. This is the canonical catalog for NASA, Tiger
   - `-Dstyle-profile=strict_core|tigerbeetle_repo`
   - `-Dperf-budget-ms=<ms>` (default: `30000` in Debug, `200` in Release*)
 
+Corpus audit options:
+
+- `./zig/zig build corpus-audit -- tests/corpus --min-cases-per-kind 2`
+- Add `--strict-min-cases` to fail on minimum-depth coverage violations.
+
+Perf benchmark options:
+
+- `./zig/zig build bench -- --runs 5`
+- `./zig/zig build bench -- --runs 5 --json`
+
 ## CI and Quality Gates
 
 ```yaml

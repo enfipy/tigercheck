@@ -17,6 +17,18 @@ const Coverage = struct {
     fail_count: u32 = 0,
 };
 
+const PrefixCoverage = struct {
+    prefix: []const u8,
+    pass_count: u32,
+    fail_count: u32,
+};
+
+const CliOptions = struct {
+    corpus_dir: []const u8,
+    min_cases_per_kind: u32 = 1,
+    strict_min_cases: bool = false,
+};
+
 const CaseKind = enum {
     pass,
     fail,
@@ -30,14 +42,20 @@ const CaseName = struct {
 const AuditData = struct {
     file_count: usize,
     tracked_prefixes: usize,
+    min_cases_per_kind: u32,
+    strict_min_cases: bool,
     invalid_names: std.array_list.Managed([]const u8),
     missing_pass_or_fail: std.array_list.Managed([]const u8),
+    under_min_coverage: std.array_list.Managed(PrefixCoverage),
+    prefix_coverage: std.array_list.Managed(PrefixCoverage),
 
     fn deinit(self: *AuditData, allocator: std.mem.Allocator) void {
         assert(self.file_count >= self.invalid_names.items.len);
         for (self.invalid_names.items) |path| allocator.free(path);
         self.invalid_names.deinit();
         self.missing_pass_or_fail.deinit();
+        self.under_min_coverage.deinit();
+        self.prefix_coverage.deinit();
     }
 };
 
@@ -64,21 +82,26 @@ const ScanResult = struct {
 
 const MissingLists = struct {
     missing_pass_or_fail: std.array_list.Managed([]const u8),
+    under_min_coverage: std.array_list.Managed(PrefixCoverage),
+    prefix_coverage: std.array_list.Managed(PrefixCoverage),
 
     fn deinit(self: *MissingLists) void {
         self.missing_pass_or_fail.deinit();
+        self.under_min_coverage.deinit();
+        self.prefix_coverage.deinit();
     }
 };
 
 pub fn main(init: std.process.Init) !void {
-    const corpus_dir = parse_cli_args(init) catch {
+    const cli = parse_cli_args(init) catch {
         print_usage();
         std.process.exit(2);
     };
-    assert(corpus_dir.len > 0);
+    assert(cli.corpus_dir.len > 0);
+    assert(cli.min_cases_per_kind > 0);
 
     const allocator = init.gpa;
-    var audit = try run_audit(allocator, corpus_dir);
+    var audit = try run_audit(allocator, cli);
     defer audit.deinit(allocator);
     assert(audit.tracked_prefixes > 0);
 
@@ -88,7 +111,7 @@ pub fn main(init: std.process.Init) !void {
     }
 }
 
-fn parse_cli_args(init: std.process.Init) ![]const u8 {
+fn parse_cli_args(init: std.process.Init) !CliOptions {
     var args = init.minimal.args.iterate();
     const argv0 = args.next();
     assert(argv0 != null);
@@ -98,26 +121,41 @@ fn parse_cli_args(init: std.process.Init) ![]const u8 {
 
     const corpus_dir = args.next() orelse return error.InvalidArguments;
     assert(corpus_dir.len > 0);
-    if (corpus_dir.len == 0) {
+    if (corpus_dir.len == 0) return error.InvalidArguments;
+
+    var out = CliOptions{ .corpus_dir = corpus_dir };
+    while (args.next()) |arg| {
+        if (std.mem.eql(u8, arg, "--strict-min-cases")) {
+            out.strict_min_cases = true;
+            continue;
+        }
+        if (std.mem.eql(u8, arg, "--min-cases-per-kind")) {
+            const value = args.next() orelse return error.InvalidArguments;
+            const parsed = std.fmt.parseInt(u32, value, 10) catch return error.InvalidArguments;
+            if (parsed == 0) return error.InvalidArguments;
+            out.min_cases_per_kind = parsed;
+            continue;
+        }
         return error.InvalidArguments;
     }
-    if (args.next() != null) {
-        return error.InvalidArguments;
-    }
-    return corpus_dir;
+    return out;
 }
 
 fn print_usage() void {
-    std.debug.print("usage: corpus-audit <corpus-dir>\n", .{});
+    std.debug.print(
+        "usage: corpus-audit <corpus-dir> [--min-cases-per-kind <n>] [--strict-min-cases]\n",
+        .{},
+    );
 }
 
-fn run_audit(allocator: std.mem.Allocator, corpus_dir: []const u8) !AuditData {
-    assert(corpus_dir.len > 0);
-    if (corpus_dir.len == 0) {
+fn run_audit(allocator: std.mem.Allocator, cli: CliOptions) !AuditData {
+    assert(cli.corpus_dir.len > 0);
+    assert(cli.min_cases_per_kind > 0);
+    if (cli.corpus_dir.len == 0) {
         return error.InvalidCorpusPath;
     }
 
-    var files = try collect_sorted_zig_files(allocator, corpus_dir);
+    var files = try collect_sorted_zig_files(allocator, cli.corpus_dir);
     defer corpus_common.deinit_owned_paths(allocator, &files);
 
     var prefixes = try collect_required_prefixes(allocator);
@@ -134,14 +172,19 @@ fn run_audit(allocator: std.mem.Allocator, corpus_dir: []const u8) !AuditData {
         allocator,
         &prefixes.required,
         &canonical_coverage,
+        cli.min_cases_per_kind,
     );
     errdefer missing.deinit();
 
     return .{
         .file_count = files.items.len,
         .tracked_prefixes = prefixes.required.items.len,
+        .min_cases_per_kind = cli.min_cases_per_kind,
+        .strict_min_cases = cli.strict_min_cases,
         .invalid_names = scan.invalid_names,
         .missing_pass_or_fail = missing.missing_pass_or_fail,
+        .under_min_coverage = missing.under_min_coverage,
+        .prefix_coverage = missing.prefix_coverage,
     };
 }
 
@@ -176,6 +219,7 @@ fn collect_required_prefixes(allocator: std.mem.Allocator) !PrefixLists {
             try out.required.append(prefix);
         }
     }
+    corpus_common.sort_paths(&out.required);
     return out;
 }
 
@@ -264,15 +308,19 @@ fn collect_missing_lists(
     allocator: std.mem.Allocator,
     required_prefixes: *const std.array_list.Managed([]const u8),
     canonical_coverage: *const std.StringHashMap(Coverage),
+    min_cases_per_kind: u32,
 ) !MissingLists {
     assert(required_prefixes.items.len <= rule_count);
     assert(canonical_coverage.count() <= 4096);
+    assert(min_cases_per_kind > 0);
     if (required_prefixes.items.len == 0) {
         return error.InvalidRuleSet;
     }
 
     var out = MissingLists{
         .missing_pass_or_fail = std.array_list.Managed([]const u8).init(allocator),
+        .under_min_coverage = std.array_list.Managed(PrefixCoverage).init(allocator),
+        .prefix_coverage = std.array_list.Managed(PrefixCoverage).init(allocator),
     };
     errdefer out.deinit();
 
@@ -280,8 +328,22 @@ fn collect_missing_lists(
         assert(prefix.len > 0);
         const coverage =
             canonical_coverage.get(corpus_common.canonical_rule_prefix(prefix)) orelse Coverage{};
+
+        try out.prefix_coverage.append(.{
+            .prefix = prefix,
+            .pass_count = coverage.pass_count,
+            .fail_count = coverage.fail_count,
+        });
+
         if (coverage.pass_count == 0 or coverage.fail_count == 0) {
             try out.missing_pass_or_fail.append(prefix);
+        }
+        if (coverage.pass_count < min_cases_per_kind or coverage.fail_count < min_cases_per_kind) {
+            try out.under_min_coverage.append(.{
+                .prefix = prefix,
+                .pass_count = coverage.pass_count,
+                .fail_count = coverage.fail_count,
+            });
         }
     }
     return out;
@@ -296,9 +358,17 @@ fn print_audit(io: std.Io, audit: *const AuditData) !void {
     const stdout = &stdout_writer.interface;
 
     try stdout.print(
-        "corpus-audit: files={d} tracked_prefixes={d}\n",
-        .{ audit.file_count, audit.tracked_prefixes },
+        "corpus-audit: files={d} tracked_prefixes={d} min_cases_per_kind={d}\n",
+        .{ audit.file_count, audit.tracked_prefixes, audit.min_cases_per_kind },
     );
+
+    try stdout.writeAll("corpus-audit: coverage by prefix (pass/fail)\n");
+    for (audit.prefix_coverage.items) |entry| {
+        try stdout.print(
+            "  - {s}: pass={d} fail={d}\n",
+            .{ entry.prefix, entry.pass_count, entry.fail_count },
+        );
+    }
 
     if (audit.invalid_names.items.len > 0) {
         try stdout.writeAll("corpus-audit: invalid corpus filenames\n");
@@ -314,6 +384,20 @@ fn print_audit(io: std.Io, audit: *const AuditData) !void {
         }
     }
 
+    if (audit.under_min_coverage.items.len > 0) {
+        if (audit.strict_min_cases) {
+            try stdout.writeAll("corpus-audit: strict minimum coverage violations\n");
+        } else {
+            try stdout.writeAll("corpus-audit: minimum coverage warnings\n");
+        }
+        for (audit.under_min_coverage.items) |entry| {
+            try stdout.print(
+                "  - {s}: pass={d} fail={d} (required >= {d} each)\n",
+                .{ entry.prefix, entry.pass_count, entry.fail_count, audit.min_cases_per_kind },
+            );
+        }
+    }
+
     try stdout.flush();
 }
 
@@ -322,7 +406,13 @@ fn audit_has_failures(audit: *const AuditData) bool {
     if (audit.invalid_names.items.len > 0) {
         return true;
     }
-    return audit.missing_pass_or_fail.items.len > 0;
+    if (audit.missing_pass_or_fail.items.len > 0) {
+        return true;
+    }
+    if (audit.strict_min_cases and audit.under_min_coverage.items.len > 0) {
+        return true;
+    }
+    return false;
 }
 
 fn rule_prefix(rule_id: libtigercheck.rules.Id) []const u8 {
