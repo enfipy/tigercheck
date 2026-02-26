@@ -624,26 +624,25 @@ fn apply_case_observation(
     if (file_path.len == 0) {
         return error.InvalidInputPath;
     }
-    const idx = @intFromEnum(expectation.expected_rule);
-    assert(idx < accumulators.len);
-    if (idx >= accumulators.len) {
-        return error.InvalidRuleIndex;
-    }
+    for (all_rule_ids, 0..) |rule_id, idx| {
+        assert(idx < accumulators.len);
+        const acc = &accumulators[idx];
+        const expected_positive = expectation.expect_fail and rule_id == expectation.expected_rule;
+        const observed_positive = observation.seen_rules.isSet(idx);
 
-    const acc = &accumulators[idx];
-    const expected_seen = observation.seen_rules.isSet(idx);
-
-    if (expectation.expect_fail) {
-        acc.positives += 1;
-        if (expected_seen) {
-            acc.tp += 1;
-        } else {
-            acc.fn_count += 1;
-            try acc.fn_cases.append(file_path);
+        if (expected_positive) {
+            acc.positives += 1;
+            if (observed_positive) {
+                acc.tp += 1;
+            } else {
+                acc.fn_count += 1;
+                try acc.fn_cases.append(file_path);
+            }
+            continue;
         }
-    } else {
+
         acc.negatives += 1;
-        if (expected_seen) {
+        if (observed_positive) {
             acc.fp += 1;
             try acc.fp_cases.append(file_path);
         } else {
@@ -662,6 +661,66 @@ fn apply_case_observation(
             stats.contract_failures += 1;
         }
     }
+}
+
+test "apply_case_observation scores cross-rule false positives" {
+    const allocator = std.testing.allocator;
+    const accumulators = try init_accumulators(allocator);
+    defer deinit_accumulators(allocator, accumulators);
+
+    var seen = RuleBitSet.initEmpty();
+    const expected_rule = rules.Id.N02_BOUNDED_LOOPS;
+    const extra_rule = rules.Id.TS11_PACED_CONTROL;
+    seen.set(@intFromEnum(expected_rule));
+    seen.set(@intFromEnum(extra_rule));
+
+    var stats = RunStats{};
+    try apply_case_observation(
+        accumulators,
+        "tests/corpus/nasa/fail_N02_tainted_bound.zig",
+        .{ .expect_fail = true, .expected_rule = expected_rule },
+        .{ .exited_ok = false, .seen_rules = seen },
+        &stats,
+    );
+
+    const expected_acc = accumulators[@intFromEnum(expected_rule)];
+    try std.testing.expectEqual(@as(u32, 1), expected_acc.positives);
+    try std.testing.expectEqual(@as(u32, 1), expected_acc.tp);
+
+    const extra_acc = accumulators[@intFromEnum(extra_rule)];
+    try std.testing.expectEqual(@as(u32, 1), extra_acc.negatives);
+    try std.testing.expectEqual(@as(u32, 1), extra_acc.fp);
+    try std.testing.expectEqual(@as(usize, 1), extra_acc.fp_cases.items.len);
+
+    try std.testing.expectEqual(@as(u32, 1), stats.evaluated_cases);
+    try std.testing.expectEqual(@as(u32, 0), stats.contract_failures);
+}
+
+test "apply_case_observation counts pass-case emissions as fp" {
+    const allocator = std.testing.allocator;
+    const accumulators = try init_accumulators(allocator);
+    defer deinit_accumulators(allocator, accumulators);
+
+    var seen = RuleBitSet.initEmpty();
+    const emitted_rule = rules.Id.TS20_NO_ABBREVIATION;
+    seen.set(@intFromEnum(emitted_rule));
+
+    var stats = RunStats{};
+    try apply_case_observation(
+        accumulators,
+        "tests/corpus/tigerstyle/pass_TS20_no_abbreviation.zig",
+        .{ .expect_fail = false, .expected_rule = emitted_rule },
+        .{ .exited_ok = true, .seen_rules = seen },
+        &stats,
+    );
+
+    const emitted_acc = accumulators[@intFromEnum(emitted_rule)];
+    try std.testing.expectEqual(@as(u32, 1), emitted_acc.negatives);
+    try std.testing.expectEqual(@as(u32, 1), emitted_acc.fp);
+    try std.testing.expectEqual(@as(usize, 1), emitted_acc.fp_cases.items.len);
+
+    try std.testing.expectEqual(@as(u32, 1), stats.evaluated_cases);
+    try std.testing.expectEqual(@as(u32, 0), stats.contract_failures);
 }
 
 fn build_report(
