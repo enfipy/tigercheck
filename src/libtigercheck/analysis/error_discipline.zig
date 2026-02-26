@@ -56,10 +56,10 @@ pub fn detect_error_handling_in_function(
         .file_path = file_path,
         .result = result,
     };
-    try ast_walk.walk(tree, body_node, &ctx, error_discipline_visit_node);
+    try ast_walk.walk(tree, body_node, &ctx, visit_error_node);
 }
 
-fn error_discipline_visit_node(
+fn visit_error_node(
     tree: *const std.zig.Ast,
     node: std.zig.Ast.Node.Index,
     ctx_opaque: *anyopaque,

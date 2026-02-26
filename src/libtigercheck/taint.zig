@@ -45,18 +45,18 @@ const FunctionWalkState = struct {
 
 const CallPath = struct {
     parts: [8][]const u8 = undefined,
-    len: usize = 0,
+    len: u8 = 0,
 
     fn append(self: *CallPath, value: []const u8) void {
-        if (self.len < self.parts.len) {
-            self.parts[self.len] = value;
+        if (@as(usize, self.len) < self.parts.len) {
+            self.parts[@as(usize, self.len)] = value;
             self.len += 1;
         }
     }
 
     fn last(self: *const CallPath) ?[]const u8 {
         if (self.len == 0) return null;
-        return self.parts[self.len - 1];
+        return self.parts[@as(usize, self.len - 1)];
     }
 };
 
@@ -300,7 +300,7 @@ fn note_call(tree: *const Ast, node: Ast.Node.Index, ctx: *WalkCtx) void {
     var call_buf: [1]Ast.Node.Index = undefined;
     const call = tree.fullCall(&call_buf, node) orelse return;
     var path: CallPath = .{};
-    call_expr.collect_call_path_into(tree, call.ast.fn_expr, path.parts[0..], &path.len);
+    call_expr.collect_call_path_into(8, tree, call.ast.fn_expr, &path.parts, &path.len);
     if (is_forbidden_alloc_path(&path)) {
         ctx.state.has_forbidden_alloc = true;
     }
@@ -792,7 +792,7 @@ fn bound_node_is_ast_token_call(tree: *const Ast, node: Ast.Node.Index) bool {
             var call_buf: [1]Ast.Node.Index = undefined;
             const call = tree.fullCall(&call_buf, node) orelse return false;
             var path: CallPath = .{};
-            call_expr.collect_call_path_into(tree, call.ast.fn_expr, path.parts[0..], &path.len);
+            call_expr.collect_call_path_into(8, tree, call.ast.fn_expr, &path.parts, &path.len);
             const method_name = path.last() orelse return false;
             if (std.mem.eql(u8, method_name, "firstToken")) return true;
             return std.mem.eql(u8, method_name, "lastToken");
@@ -884,7 +884,7 @@ fn bound_node_is_green_call(
             var call_buf: [1]Ast.Node.Index = undefined;
             const call = tree.fullCall(&call_buf, node) orelse return false;
             var path: CallPath = .{};
-            call_expr.collect_call_path_into(tree, call.ast.fn_expr, path.parts[0..], &path.len);
+            call_expr.collect_call_path_into(8, tree, call.ast.fn_expr, &path.parts, &path.len);
             return call_is_green_function(file_path, &path, green_functions);
         },
         else => return false,

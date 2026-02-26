@@ -1304,6 +1304,11 @@ fn detect_error_handling_in_function(
     file_path: []const u8,
     result: *Result,
 ) !void {
+    assert(file_path.len > 0);
+    assert(body_node == .root or @intFromEnum(body_node) < tree.nodes.len);
+    assert(result.diagnostics.items.len == result.warning_count + result.critical_count);
+    if (file_path.len == 0) return;
+    if (body_node == .root or @intFromEnum(body_node) >= tree.nodes.len) return;
     try error_discipline.detect_error_handling_in_function(tree, body_node, file_path, result);
 }
 
@@ -2981,6 +2986,13 @@ fn detect_implicit_alloc_and_switch_else(
     file_path: []const u8,
     result: *Result,
 ) anyerror!void {
+    assert(source.len > 0);
+    assert(file_path.len > 0);
+    assert(node == .root or @intFromEnum(node) < tree.nodes.len);
+    assert(result.diagnostics.items.len == result.warning_count + result.critical_count);
+    if (source.len == 0) return;
+    if (file_path.len == 0) return;
+    if (node == .root or @intFromEnum(node) >= tree.nodes.len) return;
     try implicit_walk.detect_implicit_alloc_and_switch_else(
         allocator,
         tree,
@@ -2998,8 +3010,17 @@ fn detect_implicit_alloc_and_switch_else_with_limit(
     node: std.zig.Ast.Node.Index,
     file_path: []const u8,
     result: *Result,
-    max_nodes: usize,
+    max_nodes: u32,
 ) !void {
+    assert(source.len > 0);
+    assert(file_path.len > 0);
+    assert(node == .root or @intFromEnum(node) < tree.nodes.len);
+    assert(max_nodes > 0);
+    assert(result.diagnostics.items.len == result.warning_count + result.critical_count);
+    if (source.len == 0) return;
+    if (file_path.len == 0) return;
+    if (node == .root or @intFromEnum(node) >= tree.nodes.len) return;
+    if (max_nodes == 0) return;
     try implicit_walk.detect_implicit_alloc_and_switch_else_with_limit(
         allocator,
         tree,

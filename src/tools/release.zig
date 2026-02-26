@@ -455,9 +455,10 @@ fn parse_validate_args(
     assert(arg2 == null or arg2.?.len > 0);
     assert(arg3 == null or arg3.?.len > 0);
     assert(arg4 == null or arg4.?.len > 0);
-    if (arg1 == null or arg2 == null or arg3 == null or arg4 == null) {
-        return error.InvalidArguments;
-    }
+    if (arg1 == null) return error.InvalidArguments;
+    if (arg2 == null) return error.InvalidArguments;
+    if (arg3 == null) return error.InvalidArguments;
+    if (arg4 == null) return error.InvalidArguments;
 
     var tag: ?[]const u8 = null;
     var sha: ?[]const u8 = null;
@@ -635,18 +636,18 @@ fn is_semver(version: []const u8) bool {
 
 fn is_hex_sha(sha: []const u8) bool {
     assert(sha.len <= 64);
+    assert(std.mem.indexOfScalar(u8, sha, 0) == null);
+    assert(std.mem.indexOfScalar(u8, sha, ' ') == null);
     if (sha.len < 7 or sha.len > 40) return false;
 
     for (sha) |byte| {
         const is_digit = byte >= '0' and byte <= '9';
         const is_lower_hex = byte >= 'a' and byte <= 'f';
         const is_upper_hex = byte >= 'A' and byte <= 'F';
-        const is_hex = is_digit or is_lower_hex or is_upper_hex;
-        if (is_hex) {
-            // positive invariant
-        } else {
-            return false;
-        }
+        if (is_digit) continue;
+        if (is_lower_hex) continue;
+        if (is_upper_hex) continue;
+        return false;
     }
     return true;
 }

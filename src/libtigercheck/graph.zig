@@ -463,7 +463,7 @@ fn walk_body_visit_node(
             const call = tree.fullCall(&call_buf, node) orelse return .visit_children;
 
             var path: CallPath = .{};
-            call_expr.collect_call_path_into(tree, call.ast.fn_expr, path.parts[0..], &path.len);
+            call_expr.collect_call_path_into(8, tree, call.ast.fn_expr, &path.parts, &path.len);
 
             if (try resolve_call_target(
                 ctx.arena,
@@ -517,7 +517,7 @@ fn resolve_call_target(
     return resolve_field_call(
         arena,
         path.parts[0],
-        path.parts[path.len - 1],
+        path.parts[@as(usize, path.len - 1)],
         function.file_path,
         module,
         local_var_types,
@@ -545,11 +545,11 @@ fn owner_type_from_init(ast: *const Ast, init_node: Ast.Node.Index) ?[]const u8 
 
 const CallPath = struct {
     parts: [8][]const u8 = undefined,
-    len: usize = 0,
+    len: u8 = 0,
 
     fn append(self: *CallPath, value: []const u8) void {
-        if (self.len < self.parts.len) {
-            self.parts[self.len] = value;
+        if (@as(usize, self.len) < self.parts.len) {
+            self.parts[@as(usize, self.len)] = value;
             self.len += 1;
         }
     }

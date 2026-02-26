@@ -51,7 +51,7 @@ pub fn detect_implicit_alloc_and_switch_else_with_limit(
     node: std.zig.Ast.Node.Index,
     file_path: []const u8,
     result: *Result,
-    max_nodes: usize,
+    max_nodes: u32,
 ) !void {
     assert(source.len > 0);
     assert(file_path.len > 0);
@@ -74,7 +74,7 @@ pub fn detect_implicit_alloc_and_switch_else_with_limit(
     };
 
     ast_walk.walk_with_options(tree, node, &ctx, implicit_visit_node, .{
-        .max_nodes = max_nodes,
+        .max_nodes = @as(usize, max_nodes),
     }) catch |err| {
         if (err == error.AstWalkLimit) {
             try append_diag(

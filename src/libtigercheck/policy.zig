@@ -26,6 +26,10 @@ pub const RuleOverrides = struct {
     off_csv: []const u8,
 };
 
+const SegmentNeedle = struct {
+    value: []const u8,
+};
+
 pub const Policy = struct {
     profile_name: []const u8,
     hard_rules: []const rules.Id,
@@ -63,17 +67,62 @@ pub fn validate(policy_value: Policy) !void {
 
 pub fn classify_path(_: Policy, file_path: []const u8) CodeClass {
     assert(file_path.len > 0);
+    assert(file_path.len <= 4096);
+    assert(std.mem.indexOfScalar(u8, file_path, 0) == null);
     if (file_path.len == 0) return .runtime;
-    if (path_has_any_segment(file_path, &.{ "vendor", "vendors", "vendored", "third_party", "third-party", "external", "deps", "dependency", "dependencies" })) {
+    if (file_path.len > 4096) return .runtime;
+    if (path_has_any_segment(
+        file_path,
+        &.{
+            .{ .value = "vendor" },
+            .{ .value = "vendors" },
+            .{ .value = "vendored" },
+            .{ .value = "third_party" },
+            .{ .value = "third-party" },
+            .{ .value = "external" },
+            .{ .value = "deps" },
+            .{ .value = "dependency" },
+            .{ .value = "dependencies" },
+        },
+    )) {
         return .vendored;
     }
-    if (path_has_any_segment(file_path, &.{ "binding", "bindings", "ffi", "cbindgen", "interop" })) {
+    if (path_has_any_segment(
+        file_path,
+        &.{
+            .{ .value = "binding" },
+            .{ .value = "bindings" },
+            .{ .value = "ffi" },
+            .{ .value = "cbindgen" },
+            .{ .value = "interop" },
+        },
+    )) {
         return .bindings;
     }
-    if (path_has_any_segment(file_path, &.{ "test", "tests", "fuzz", "fuzzer", "fuzzers", "bench", "benches" })) {
+    if (path_has_any_segment(
+        file_path,
+        &.{
+            .{ .value = "test" },
+            .{ .value = "tests" },
+            .{ .value = "fuzz" },
+            .{ .value = "fuzzer" },
+            .{ .value = "fuzzers" },
+            .{ .value = "bench" },
+            .{ .value = "benches" },
+        },
+    )) {
         return .test_or_fuzz;
     }
-    if (path_has_any_segment(file_path, &.{ "tool", "tools", "scripts", "script", "ci" })) {
+    if (path_has_any_segment(
+        file_path,
+        &.{
+            .{ .value = "tool" },
+            .{ .value = "tools" },
+            .{ .value = "scripts" },
+            .{ .value = "script" },
+            .{ .value = "ci" },
+        },
+    )) {
         return .tooling;
     }
     return .runtime;
@@ -102,16 +151,31 @@ pub fn thresholds_for(policy_value: Policy, class: CodeClass) Thresholds {
         .runtime => policy_value.default_thresholds,
         .test_or_fuzz => policy_value.default_thresholds,
         .tooling => .{
-            .max_function_lines = threshold_plus(policy_value.default_thresholds.max_function_lines, 40),
-            .max_line_length = threshold_plus(policy_value.default_thresholds.max_line_length, 20),
+            .max_function_lines = if (policy_value.default_thresholds.max_function_lines) |v|
+                v +| 40
+            else
+                null,
+            .max_line_length = if (policy_value.default_thresholds.max_line_length) |v|
+                v +| 20
+            else
+                null,
         },
         .bindings => .{
-            .max_function_lines = threshold_plus(policy_value.default_thresholds.max_function_lines, 20),
+            .max_function_lines = if (policy_value.default_thresholds.max_function_lines) |v|
+                v +| 20
+            else
+                null,
             .max_line_length = policy_value.default_thresholds.max_line_length,
         },
         .vendored => .{
-            .max_function_lines = threshold_plus(policy_value.default_thresholds.max_function_lines, 180),
-            .max_line_length = threshold_plus(policy_value.default_thresholds.max_line_length, 80),
+            .max_function_lines = if (policy_value.default_thresholds.max_function_lines) |v|
+                v +| 180
+            else
+                null,
+            .max_line_length = if (policy_value.default_thresholds.max_line_length) |v|
+                v +| 80
+            else
+                null,
         },
     };
 }
@@ -127,20 +191,13 @@ pub fn is_effectively_hard_rule(policy_value: Policy, class: CodeClass, rule: ru
     };
 }
 
-fn threshold_plus(value: ?u16, delta: u16) ?u16 {
-    if (value) |v| {
-        return v +| delta;
-    }
-    return null;
-}
-
-fn path_has_any_segment(file_path: []const u8, needles: []const []const u8) bool {
+fn path_has_any_segment(file_path: []const u8, needles: []const SegmentNeedle) bool {
     assert(file_path.len > 0);
     assert(needles.len > 0);
     if (file_path.len == 0) return false;
     for (needles) |needle| {
-        if (needle.len == 0) continue;
-        if (path_has_segment(file_path, needle)) {
+        if (needle.value.len == 0) continue;
+        if (path_has_segment(file_path, needle.value)) {
             return true;
         }
     }

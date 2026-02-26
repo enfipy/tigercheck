@@ -20,4 +20,5 @@ zig-pkg/
 
 # Don't look at this
 TIGER_STYLE.md
+AGENTS.md
 /tasks/
