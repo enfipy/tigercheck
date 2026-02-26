@@ -9,6 +9,7 @@ const rules = @import("../rules.zig");
 const policy = @import("../policy.zig");
 const ast_walk = @import("../ast_walk.zig");
 const error_discipline = @import("error_discipline.zig");
+const file_cache = @import("file_cache.zig");
 const implicit_walk = @import("implicit_walk.zig");
 const roles = @import("roles.zig");
 const pedantic = @import("pedantic.zig");
@@ -86,8 +87,12 @@ pub fn analyze_with_options(
     var red = std.StringHashMap(void).init(allocator);
     defer red.deinit();
 
+    var parsed_files = file_cache.Cache.init(allocator);
+    defer parsed_files.deinit();
+    try parsed_files.build_for_call_graph(call_graph);
+
     const phase_sets = PhaseSets{ .green = &green, .red = &red };
-    try seed_green_and_red(allocator, call_graph, phase_sets);
+    try seed_green_and_red(allocator, call_graph, &parsed_files, phase_sets);
 
     var runtime_files = std.StringHashMap(void).init(allocator);
     defer runtime_files.deinit();
@@ -98,6 +103,7 @@ pub fn analyze_with_options(
     try detect_local_quality_violations(
         allocator,
         call_graph,
+        &parsed_files,
         quality_options,
         active_policy,
         &runtime_files,
@@ -156,6 +162,7 @@ fn first_warning_file_path(result: *const Result) ?[]const u8 {
 fn seed_green_and_red(
     allocator: std.mem.Allocator,
     call_graph: *const graph.CallGraph,
+    parsed_files: *const file_cache.Cache,
     phase_sets: PhaseSets,
 ) !void {
     assert(
@@ -171,7 +178,7 @@ fn seed_green_and_red(
     defer queue.deinit();
     try seed_phase_roots(call_graph, phase_sets, &queue);
     try propagate_phase(&queue, &edges_by_caller, phase_sets.green);
-    try seed_red_from_runtime_loops(allocator, call_graph, phase_sets.red);
+    try seed_red_from_runtime_loops(allocator, call_graph, parsed_files, phase_sets.red);
     try refill_queue_from_set(&queue, phase_sets.red);
     try propagate_phase(&queue, &edges_by_caller, phase_sets.red);
 }
@@ -239,28 +246,18 @@ fn is_red_phase_root(node_name: []const u8) bool {
 fn seed_red_from_runtime_loops(
     allocator: std.mem.Allocator,
     call_graph: *const graph.CallGraph,
+    parsed_files: *const file_cache.Cache,
     red: *std.StringHashMap(void),
 ) !void {
     assert(call_graph.files.items.len <= call_graph.files.capacity);
     assert(red.count() <= call_graph.nodes.count());
     for (call_graph.files.items) |file_path| {
         assert(file_path.len > 0);
-        const src = try std.Io.Dir.cwd().readFileAllocOptions(
-            std.Options.debug_io,
-            file_path,
-            allocator,
-            std.Io.Limit.limited(16 * 1024 * 1024),
-            .of(u8),
-            0,
-        );
-        defer allocator.free(src);
-
-        var tree = try std.zig.Ast.parse(allocator, src, .zig);
-        defer tree.deinit(allocator);
+        const parsed = parsed_files.get(file_path) orelse return error.MissingParsedFile;
 
         var function_names = std.StringHashMap(void).init(allocator);
         defer function_names.deinit();
-        try collect_runtime_loop_function_names(&tree, &function_names);
+        try collect_runtime_loop_function_names(&parsed.tree, &function_names);
 
         var fn_it = function_names.keyIterator();
         while (fn_it.next()) |function_name| {
@@ -539,6 +536,7 @@ fn append_first_unbounded_loop_diag(
 fn detect_local_quality_violations(
     allocator: std.mem.Allocator,
     call_graph: *const graph.CallGraph,
+    parsed_files: *const file_cache.Cache,
     options: AnalyzeOptions,
     active_policy: policy.Policy,
     runtime_files: *const std.StringHashMap(void),
@@ -558,6 +556,7 @@ fn detect_local_quality_violations(
     for (call_graph.files.items) |file_path| {
         try analyze_local_quality_file(
             allocator,
+            parsed_files,
             file_path,
             options,
             active_policy,
@@ -573,6 +572,7 @@ fn detect_local_quality_violations(
 
 fn analyze_local_quality_file(
     allocator: std.mem.Allocator,
+    parsed_files: *const file_cache.Cache,
     file_path: []const u8,
     options: AnalyzeOptions,
     active_policy: policy.Policy,
@@ -587,22 +587,7 @@ fn analyze_local_quality_file(
     assert(default_max_function_lines > 0);
     if (file_path.len == 0) return;
     if (default_max_function_lines == 0) return;
-
-    const source = try std.Io.Dir.cwd().readFileAllocOptions(
-        std.Options.debug_io,
-        file_path,
-        allocator,
-        std.Io.Limit.limited(16 * 1024 * 1024),
-        .of(u8),
-        0,
-    );
-    defer allocator.free(source);
-
-    const tree = try std.zig.Ast.parse(allocator, source, .zig);
-    defer {
-        var t = tree;
-        t.deinit(allocator);
-    }
+    const parsed = parsed_files.get(file_path) orelse return error.MissingParsedFile;
 
     try analyze_local_quality_with_parsed(
         allocator,
@@ -614,8 +599,8 @@ fn analyze_local_quality_file(
         green,
         red,
         default_max_function_lines,
-        source,
-        &tree,
+        parsed.source,
+        &parsed.tree,
         result,
     );
 }
@@ -1308,14 +1293,6 @@ fn find_metric(
     return null;
 }
 
-fn detect_error_handling_violations(
-    allocator: std.mem.Allocator,
-    call_graph: *const graph.CallGraph,
-    result: *Result,
-) !void {
-    try error_discipline.detect_error_handling_violations(allocator, call_graph, result);
-}
-
 fn detect_error_handling_in_function(
     tree: *const std.zig.Ast,
     body_node: std.zig.Ast.Node.Index,
@@ -1323,40 +1300,6 @@ fn detect_error_handling_in_function(
     result: *Result,
 ) !void {
     try error_discipline.detect_error_handling_in_function(tree, body_node, file_path, result);
-}
-
-fn detect_global_state_and_pointer_violations(
-    allocator: std.mem.Allocator,
-    call_graph: *const graph.CallGraph,
-    result: *Result,
-) !void {
-    assert(result.diagnostics.items.len == result.warning_count + result.critical_count);
-    assert(call_graph.files.items.len <= call_graph.files.capacity);
-    for (call_graph.files.items) |file_path| {
-        const source = try std.Io.Dir.cwd().readFileAllocOptions(
-            std.Options.debug_io,
-            file_path,
-            allocator,
-            std.Io.Limit.limited(16 * 1024 * 1024),
-            .of(u8),
-            0,
-        );
-        defer allocator.free(source);
-
-        const tree = try std.zig.Ast.parse(allocator, source, .zig);
-        defer {
-            var t = tree;
-            t.deinit(allocator);
-        }
-
-        try detect_global_state_and_pointer_violations_with_parsed(
-            allocator,
-            &tree,
-            source,
-            file_path,
-            result,
-        );
-    }
 }
 
 fn detect_global_state_and_pointer_violations_with_parsed(

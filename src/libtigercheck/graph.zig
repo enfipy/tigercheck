@@ -2,6 +2,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Ast = std.zig.Ast;
 const ast_walk = @import("ast_walk.zig");
+const call_expr = @import("analysis/call_expr.zig");
 
 const FunctionRecord = struct {
     canonical_name: []const u8,
@@ -462,7 +463,7 @@ fn walk_body_visit_node(
             const call = tree.fullCall(&call_buf, node) orelse return .visit_children;
 
             var path: CallPath = .{};
-            collect_call_path(tree, call.ast.fn_expr, &path);
+            call_expr.collect_call_path_into(tree, call.ast.fn_expr, path.parts[0..], &path.len);
 
             if (try resolve_call_target(
                 ctx.arena,
@@ -553,40 +554,6 @@ const CallPath = struct {
         }
     }
 };
-
-fn collect_call_path(ast: *const Ast, expr_node: Ast.Node.Index, path: *CallPath) void {
-    assert(ast.nodes.len > 0);
-    assert(ast.nodes.items(.main_token).len == ast.nodes.len);
-    assert(path.len <= path.parts.len);
-    assert(expr_node == .root or @intFromEnum(expr_node) < ast.nodes.len);
-    if (expr_node == .root or @intFromEnum(expr_node) >= ast.nodes.len) return;
-
-    switch (ast.nodes.items(.tag)[@intFromEnum(expr_node)]) {
-        .identifier => {
-            const token = ast.nodes.items(.main_token)[@intFromEnum(expr_node)];
-            path.append(ast.tokenSlice(token));
-        },
-        .field_access => {
-            const data = ast.nodeData(expr_node);
-            const lhs, const field_token = data.node_and_token;
-            collect_call_path(ast, lhs, path);
-            path.append(ast.tokenSlice(field_token));
-        },
-        .grouped_expression,
-        .unwrap_optional,
-        => {
-            const child = ast.nodeData(expr_node).node_and_token[0];
-            collect_call_path(ast, child, path);
-        },
-        .@"try",
-        .@"comptime",
-        => {
-            const child = ast.nodeData(expr_node).node;
-            collect_call_path(ast, child, path);
-        },
-        else => {},
-    }
-}
 
 fn resolve_field_call(
     arena: std.mem.Allocator,

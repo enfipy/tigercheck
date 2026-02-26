@@ -8,36 +8,47 @@ pub fn collect_call_path(
     path: *[6][]const u8,
     len: *u8,
 ) void {
+    var out_len: usize = @as(usize, len.*);
+    collect_call_path_into(tree, expr_node, path[0..], &out_len);
+    len.* = @intCast(out_len);
+}
+
+pub fn collect_call_path_into(
+    tree: *const Ast,
+    expr_node: Ast.Node.Index,
+    path: [][]const u8,
+    len: *usize,
+) void {
     assert(tree.nodes.items(.main_token).len == tree.nodes.len);
     assert(len.* <= path.len);
     if (expr_node == .root or @intFromEnum(expr_node) >= tree.nodes.len) return;
     const tag = tree.nodes.items(.tag)[@intFromEnum(expr_node)];
     if (tag == .identifier) {
         const token = tree.nodes.items(.main_token)[@intFromEnum(expr_node)];
-        if (@as(usize, len.*) >= path.len) return;
-        path[@as(usize, len.*)] = tree.tokenSlice(token);
+        if (len.* >= path.len) return;
+        path[len.*] = tree.tokenSlice(token);
         len.* += 1;
         return;
     }
 
     if (tag == .field_access) {
         const lhs, const field_token = tree.nodeData(expr_node).node_and_token;
-        collect_call_path(tree, lhs, path, len);
-        if (@as(usize, len.*) >= path.len) return;
-        path[@as(usize, len.*)] = tree.tokenSlice(field_token);
+        collect_call_path_into(tree, lhs, path, len);
+        if (len.* >= path.len) return;
+        path[len.*] = tree.tokenSlice(field_token);
         len.* += 1;
         return;
     }
 
     if (tag == .unwrap_optional or tag == .grouped_expression) {
         const child = tree.nodeData(expr_node).node_and_token[0];
-        collect_call_path(tree, child, path, len);
+        collect_call_path_into(tree, child, path, len);
         return;
     }
 
     if (is_unary_wrapper_tag(tag)) {
         const child = tree.nodeData(expr_node).node;
-        collect_call_path(tree, child, path, len);
+        collect_call_path_into(tree, child, path, len);
     }
 }
 
@@ -139,4 +150,46 @@ test "collect_call_path handles grouped try receiver" {
     }
 
     try std.testing.expect(matched_call);
+}
+
+test "collect_call_path_into supports wider output buffer" {
+    const source =
+        \\const a = struct {
+        \\    const b = struct {
+        \\        const c = struct {
+        \\            const d = struct {
+        \\                fn e() void {}
+        \\            };
+        \\        };
+        \\    };
+        \\};
+        \\
+        \\test "path" {
+        \\    a.b.c.d.e();
+        \\}
+    ;
+
+    var tree = try Ast.parse(std.testing.allocator, source, .zig);
+    defer tree.deinit(std.testing.allocator);
+
+    var found = false;
+    for (0..tree.nodes.len) |raw_index| {
+        const node: Ast.Node.Index = @enumFromInt(raw_index);
+        const tag = tree.nodes.items(.tag)[raw_index];
+        const is_call = tag == .call or tag == .call_comma or tag == .call_one or
+            tag == .call_one_comma;
+        if (!is_call) continue;
+        var call_buf: [1]Ast.Node.Index = undefined;
+        const full = tree.fullCall(&call_buf, node) orelse continue;
+
+        var parts: [8][]const u8 = undefined;
+        var len: usize = 0;
+        collect_call_path_into(&tree, full.ast.fn_expr, parts[0..], &len);
+        if (len == 5 and std.mem.eql(u8, parts[4], "e")) {
+            found = true;
+            break;
+        }
+    }
+
+    try std.testing.expect(found);
 }
