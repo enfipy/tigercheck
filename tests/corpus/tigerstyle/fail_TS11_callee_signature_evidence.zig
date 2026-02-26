@@ -1,3 +1,4 @@
+// expect-rule: TS11_PACED_CONTROL
 const EventSource = struct {};
 
 const QueueStore = struct {

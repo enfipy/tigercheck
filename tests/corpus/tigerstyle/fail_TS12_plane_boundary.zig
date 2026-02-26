@@ -1,3 +1,4 @@
+// expect-rule: TS12_PLANE_BOUNDARY
 const ControlPlane = struct {
     fn reload_config(self: *ControlPlane) void {
         _ = self;

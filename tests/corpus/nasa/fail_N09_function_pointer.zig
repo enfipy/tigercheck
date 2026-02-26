@@ -1,3 +1,4 @@
+// expect-rule: N09_POINTER_DISCIPLINE
 fn install(handler: *const fn (value: u32) void) void {
     _ = handler;
 }

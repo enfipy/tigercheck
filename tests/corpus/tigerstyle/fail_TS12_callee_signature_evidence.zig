@@ -1,3 +1,4 @@
+// expect-rule: TS12_PLANE_BOUNDARY
 const ControlPlane = struct {};
 const DataPlane = struct {};
 

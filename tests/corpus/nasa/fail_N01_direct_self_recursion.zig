@@ -1,3 +1,4 @@
+// expect-rule: N01_CONTROL_FLOW
 fn stage_a() void {
     stage_b();
 }

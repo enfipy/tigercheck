@@ -1,3 +1,4 @@
+// expect-rule: TS21_CALLBACK_LAST
 const std = @import("std");
 
 // TS21: Callback parameter should be last

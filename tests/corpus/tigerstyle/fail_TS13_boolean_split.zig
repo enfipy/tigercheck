@@ -1,3 +1,4 @@
+// expect-rule: TS13_BOOLEAN_SPLIT
 const std = @import("std");
 
 pub fn main() void {

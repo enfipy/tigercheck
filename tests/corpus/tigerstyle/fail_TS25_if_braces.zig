@@ -1,3 +1,4 @@
+// expect-rule: TS25_IF_BRACES
 const std = @import("std");
 
 fn main() void {

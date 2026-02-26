@@ -1,3 +1,4 @@
+// expect-rule: N02_BOUNDED_LOOPS
 const std = @import("std");
 
 pub fn main() void {

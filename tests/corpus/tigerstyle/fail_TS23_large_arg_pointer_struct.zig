@@ -1,3 +1,4 @@
+// expect-rule: TS23_LARGE_ARG_POINTER
 const LargePacket = struct {
     header: [32]u8,
     body: [64]u8,

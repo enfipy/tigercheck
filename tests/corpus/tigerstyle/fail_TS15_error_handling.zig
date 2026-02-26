@@ -1,3 +1,4 @@
+// expect-rule: TS15_ERROR_HANDLING
 fn call() error{Boom}!void {
     return error.Boom;
 }

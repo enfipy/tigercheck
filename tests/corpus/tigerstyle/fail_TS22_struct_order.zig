@@ -1,3 +1,4 @@
+// expect-rule: TS22_STRUCT_ORDER
 const bad_order = struct {
     fn run() void {}
     value: u32 = 0,

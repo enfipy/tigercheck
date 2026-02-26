@@ -1,3 +1,4 @@
+// expect-rule: N07_RETURN_AND_PARAM_CHECKS
 fn call() error{Boom}!void {
     return error.Boom;
 }

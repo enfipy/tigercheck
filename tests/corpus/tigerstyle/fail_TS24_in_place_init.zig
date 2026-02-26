@@ -1,3 +1,4 @@
+// expect-rule: TS24_IN_PLACE_INIT
 const LargePacket = struct {
     header: [32]u8,
     body: [64]u8,

@@ -1,3 +1,4 @@
+// expect-rule: N10_PEDANTIC_PIPELINE
 const std = @import("std");
 
 pub fn main() void {

@@ -1,3 +1,4 @@
+// expect-rule: N05_ASSERTION_DENSITY
 pub fn main() void {
     var x: i32 = 0;
     x += 1;

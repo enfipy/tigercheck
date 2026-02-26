@@ -1,3 +1,4 @@
+// expect-rule: TB05_TAG_DISPATCH
 fn tag_in_set(tag: u8, value: u8) bool {
     return tag == value;
 }
