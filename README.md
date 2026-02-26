@@ -335,8 +335,7 @@ Local dry-run (build + package + checksums + metadata, no publish):
 
 Release validation:
 
-- latest release: `./zig/zig build release-validate`
-- specific tag: `./zig/zig build release-validate -- --tag 0.1.0`
+- explicit target: `./zig/zig build release-validate -- --tag 0.1.0 --sha <commit>`
 
 Recovery playbook:
 

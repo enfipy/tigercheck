@@ -8,20 +8,16 @@ on:
         description: "Release tag to validate (x.y.z)"
         required: true
         type: string
-  workflow_run:
-    workflows: ["Release"]
-    types:
-      - completed
-
-  schedule:
-    - cron: 0 */6 * * *
+      sha:
+        description: "Release source commit SHA"
+        required: true
+        type: string
 
 jobs:
   validate:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    if: ${{ !(github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'failure') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -29,6 +25,6 @@ jobs:
           fetch-depth: 0
 
       - run: ./zig/download.sh
-      - run: ./zig/zig build release-validate -- --tag "${{ github.event.inputs.tag }}"
+      - run: ./zig/zig build release-validate -- --tag "${{ github.event.inputs.tag }}" --sha "${{ github.event.inputs.sha }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

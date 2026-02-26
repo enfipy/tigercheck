@@ -45,3 +45,6 @@ jobs:
       - run: ./zig/zig build release -- --version "${{ inputs.version }}" --sha "${{ needs.sync_release_branch.outputs.release_sha }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - run: ./zig/zig build release-validate -- --tag "${{ inputs.version }}" --sha "${{ needs.sync_release_branch.outputs.release_sha }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
