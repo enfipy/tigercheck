@@ -1,5 +1,6 @@
 const std = @import("std");
 const graph = @import("../graph.zig");
+const parsed_file = @import("../parsed_file.zig");
 
 const assert = std.debug.assert;
 
@@ -32,23 +33,10 @@ pub const Cache = struct {
     pub fn build_for_call_graph(self: *Cache, call_graph: *const graph.CallGraph) !void {
         for (call_graph.files.items) |file_path| {
             if (self.by_file.contains(file_path)) continue;
-            const source = try std.Io.Dir.cwd().readFileAllocOptions(
-                std.Options.debug_io,
-                file_path,
-                self.allocator,
-                std.Io.Limit.limited(16 * 1024 * 1024),
-                .of(u8),
-                0,
-            );
-            errdefer self.allocator.free(source);
+            var parsed = try parsed_file.parse(self.allocator, file_path);
+            errdefer parsed.deinit();
 
-            const tree = try std.zig.Ast.parse(self.allocator, source, .zig);
-            errdefer {
-                var t = tree;
-                t.deinit(self.allocator);
-            }
-
-            try self.by_file.put(file_path, .{ .source = source, .tree = tree });
+            try self.by_file.put(file_path, .{ .source = parsed.source, .tree = parsed.tree });
         }
     }
 

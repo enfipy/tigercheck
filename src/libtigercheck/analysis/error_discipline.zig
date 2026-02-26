@@ -1,44 +1,11 @@
 const std = @import("std");
 const ast_walk = @import("../ast_walk.zig");
-const graph = @import("../graph.zig");
 const diagnostics = @import("diagnostics.zig");
 const kernel_context = @import("kernel_context.zig");
 
 const assert = std.debug.assert;
 const append_diag = diagnostics.append;
 const Result = diagnostics.Result;
-
-pub fn detect_error_handling_violations(
-    allocator: std.mem.Allocator,
-    call_graph: *const graph.CallGraph,
-    result: *Result,
-) !void {
-    assert(result.diagnostics.items.len == result.warning_count + result.critical_count);
-    for (call_graph.files.items) |file_path| {
-        const source = try std.Io.Dir.cwd().readFileAllocOptions(
-            std.Options.debug_io,
-            file_path,
-            allocator,
-            std.Io.Limit.limited(16 * 1024 * 1024),
-            .of(u8),
-            0,
-        );
-        defer allocator.free(source);
-
-        const tree = try std.zig.Ast.parse(allocator, source, .zig);
-        defer {
-            var t = tree;
-            t.deinit(allocator);
-        }
-
-        for (tree.rootDecls()) |decl| {
-            if (tree.nodes.items(.tag)[@intFromEnum(decl)] != .fn_decl) continue;
-            const body_node = tree.nodeData(decl).node_and_node[1];
-            if (body_node == .root or @intFromEnum(body_node) >= tree.nodes.len) continue;
-            try detect_error_handling_in_function(&tree, body_node, file_path, result);
-        }
-    }
-}
 
 pub fn detect_error_handling_in_function(
     tree: *const std.zig.Ast,

@@ -3,6 +3,7 @@ const assert = std.debug.assert;
 const Ast = std.zig.Ast;
 const ast_walk = @import("ast_walk.zig");
 const call_expr = @import("analysis/call_expr.zig");
+const parsed_file = @import("parsed_file.zig");
 
 const FunctionRecord = struct {
     canonical_name: []const u8,
@@ -196,20 +197,14 @@ fn process_file_and_collect(
     assert(file_path.len > 0);
     assert(zig_file_queue_bound_limit > 0);
     if (file_path.len == 0) return;
-    const source = std.Io.Dir.cwd().readFileAllocOptions(
-        std.Options.debug_io,
-        file_path,
-        arena,
-        std.Io.Limit.limited(16 * 1024 * 1024),
-        .of(u8),
-        0,
-    ) catch |err| {
+    var parsed = parsed_file.parse(arena, file_path) catch |err| {
         if (err == error.FileNotFound) return;
         return err;
     };
+    const source = parsed.source;
+    const ast = parsed.tree;
 
     try ctx.graph.files.append(arena, file_path);
-    const ast = try Ast.parse(arena, source, .zig);
 
     var module = ModuleRecord{
         .path = file_path,

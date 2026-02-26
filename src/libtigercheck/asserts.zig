@@ -4,6 +4,7 @@ const Ast = std.zig.Ast;
 const metrics = @import("metrics.zig");
 const ast_walk = @import("ast_walk.zig");
 const call_expr = @import("analysis/call_expr.zig");
+const parsed_file = @import("parsed_file.zig");
 const Count = u32;
 
 pub const FunctionAssertFacts = struct {
@@ -73,23 +74,10 @@ pub fn analyze_file(
 ) !FileAssertFacts {
     assert(file_path.len > 0);
     if (file_path.len == 0) return error.InvalidInputPath;
-    const source = try std.Io.Dir.cwd().readFileAllocOptions(
-        std.Options.debug_io,
-        file_path,
-        allocator,
-        std.Io.Limit.limited(16 * 1024 * 1024),
-        .of(u8),
-        0,
-    );
-    defer allocator.free(source);
+    var parsed = try parsed_file.parse(allocator, file_path);
+    defer parsed.deinit();
 
-    const tree = try Ast.parse(allocator, source, .zig);
-    defer {
-        var t = tree;
-        t.deinit(allocator);
-    }
-
-    return analyze_file_with_parsed(allocator, file_path, file_metrics, &tree);
+    return analyze_file_with_parsed(allocator, file_path, file_metrics, &parsed.tree);
 }
 
 pub fn analyze_file_with_parsed(

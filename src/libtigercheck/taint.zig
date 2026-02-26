@@ -4,6 +4,7 @@ const Ast = std.zig.Ast;
 const graph = @import("graph.zig");
 const ast_walk = @import("ast_walk.zig");
 const call_expr = @import("analysis/call_expr.zig");
+const parsed_file = @import("parsed_file.zig");
 
 pub const FunctionFacts = struct {
     canonical_name: []const u8,
@@ -68,23 +69,10 @@ pub fn analyze_file(
     assert(file_path.len > 0);
     assert(call_graph.files.items.len <= call_graph.files.capacity);
     if (file_path.len == 0) return error.InvalidInputPath;
-    const source = try std.Io.Dir.cwd().readFileAllocOptions(
-        std.Options.debug_io,
-        file_path,
-        allocator,
-        std.Io.Limit.limited(16 * 1024 * 1024),
-        .of(u8),
-        0,
-    );
-    defer allocator.free(source);
+    var parsed = try parsed_file.parse(allocator, file_path);
+    defer parsed.deinit();
 
-    const tree = try Ast.parse(allocator, source, .zig);
-    defer {
-        var t = tree;
-        t.deinit(allocator);
-    }
-
-    return analyze_file_with_parsed(allocator, call_graph, file_path, &tree);
+    return analyze_file_with_parsed(allocator, call_graph, file_path, &parsed.tree);
 }
 
 pub fn analyze_file_with_parsed(
