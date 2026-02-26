@@ -14,6 +14,7 @@ const implicit_walk = @import("implicit_walk.zig");
 const roles = @import("roles.zig");
 const pedantic = @import("pedantic.zig");
 const diagnostics = @import("diagnostics.zig");
+const test_depth_matrix = @import("test_depth_matrix.zig");
 const control_data_boundary = @import("control_data_boundary.zig");
 
 const ast_walk_nodes_max: usize = 4000;
@@ -24,6 +25,10 @@ const slice_size_bytes: u64 = 16;
 const declaration_locality_gap_statements: usize = 5;
 const phase_queue_bound_limit: usize = 32768;
 const append_diag = diagnostics.append;
+
+comptime {
+    _ = test_depth_matrix.analyzer_core_targets.len;
+}
 
 const PhaseSets = struct {
     green: *std.StringHashMap(void),

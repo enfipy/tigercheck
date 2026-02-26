@@ -554,3 +554,143 @@ fn is_binary_pair_tag(tag: Ast.Node.Tag) bool {
         tag == .@"orelse" or
         tag == .array_access;
 }
+
+fn first_fn_body_node(tree: *const Ast) ?Ast.Node.Index {
+    for (tree.rootDecls()) |decl| {
+        if (tree.nodes.items(.tag)[@intFromEnum(decl)] != .fn_decl) continue;
+        const body = tree.nodeData(decl).node_and_node[1];
+        if (body == .root or @intFromEnum(body) >= tree.nodes.len) continue;
+        return body;
+    }
+    return null;
+}
+
+test "walk_with_options returns AstWalkLimit at configured cap" {
+    const source =
+        \\pub fn main() void {
+        \\    var i: u32 = 0;
+        \\    while (i < 3) : (i += 1) {
+        \\        _ = i;
+        \\    }
+        \\}
+    ;
+
+    var tree = try Ast.parse(std.testing.allocator, source, .zig);
+    defer tree.deinit(std.testing.allocator);
+    const body = first_fn_body_node(&tree) orelse return error.TestExpectedEqual;
+
+    const Ctx = struct {
+        fn on_enter(
+            _: *const Ast,
+            _: Ast.Node.Index,
+            _: *anyopaque,
+        ) anyerror!VisitDecision {
+            return .visit_children;
+        }
+    };
+    var dummy: u8 = 0;
+    try std.testing.expectError(
+        error.AstWalkLimit,
+        walk_with_options(&tree, body, &dummy, Ctx.on_enter, .{ .max_nodes = 1 }),
+    );
+}
+
+test "walk_with_hooks skip_children prevents nested visits" {
+    const source =
+        \\pub fn main() void {
+        \\    var i: u32 = 0;
+        \\    while (i < 2) : (i += 1) {
+        \\        i = i + 1;
+        \\    }
+        \\}
+    ;
+
+    var tree = try Ast.parse(std.testing.allocator, source, .zig);
+    defer tree.deinit(std.testing.allocator);
+    const body = first_fn_body_node(&tree) orelse return error.TestExpectedEqual;
+
+    const Ctx = struct {
+        saw_assign: bool = false,
+        exits: usize = 0,
+
+        fn on_enter(
+            t: *const Ast,
+            node: Ast.Node.Index,
+            ctx_opaque: *anyopaque,
+        ) anyerror!VisitDecision {
+            const ctx: *@This() = @ptrCast(@alignCast(ctx_opaque));
+            const tag = t.nodes.items(.tag)[@intFromEnum(node)];
+            if (tag == .assign) {
+                ctx.saw_assign = true;
+            }
+            if (tag == .@"while" or tag == .while_simple or tag == .while_cont) {
+                return .skip_children;
+            }
+            return .visit_children;
+        }
+
+        fn on_exit(
+            _: *const Ast,
+            _: Ast.Node.Index,
+            ctx_opaque: *anyopaque,
+        ) anyerror!void {
+            const ctx: *@This() = @ptrCast(@alignCast(ctx_opaque));
+            ctx.exits += 1;
+        }
+    };
+
+    var ctx = Ctx{};
+    try walk_with_hooks(
+        &tree,
+        body,
+        &ctx,
+        .{ .on_enter = Ctx.on_enter, .on_exit = Ctx.on_exit },
+        .{},
+    );
+    try std.testing.expect(!ctx.saw_assign);
+    try std.testing.expect(ctx.exits > 0);
+}
+
+test "walk_with_hooks stop runs exit hook once" {
+    const source =
+        \\pub fn main() void {
+        \\    const x: u32 = 1;
+        \\    _ = x;
+        \\}
+    ;
+
+    var tree = try Ast.parse(std.testing.allocator, source, .zig);
+    defer tree.deinit(std.testing.allocator);
+    const body = first_fn_body_node(&tree) orelse return error.TestExpectedEqual;
+
+    const Ctx = struct {
+        exits: usize = 0,
+
+        fn on_enter(
+            _: *const Ast,
+            _: Ast.Node.Index,
+            _: *anyopaque,
+        ) anyerror!VisitDecision {
+            return .stop;
+        }
+
+        fn on_exit(
+            _: *const Ast,
+            _: Ast.Node.Index,
+            ctx_opaque: *anyopaque,
+        ) anyerror!void {
+            const ctx: *@This() = @ptrCast(@alignCast(ctx_opaque));
+            ctx.exits += 1;
+        }
+    };
+
+    var ctx = Ctx{};
+    try walk_with_hooks(
+        &tree,
+        body,
+        &ctx,
+        .{ .on_enter = Ctx.on_enter, .on_exit = Ctx.on_exit },
+        .{},
+    );
+    try std.testing.expectEqual(@as(usize, 1), ctx.exits);
+}
