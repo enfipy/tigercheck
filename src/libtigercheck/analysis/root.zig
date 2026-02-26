@@ -23,6 +23,8 @@ const pointer_size_bytes: u64 = 8;
 const slice_size_bytes: u64 = 16;
 const declaration_locality_gap_statements: usize = 5;
 const phase_queue_bound_limit: usize = 32768;
+const implicit_walk_limit_message =
+    "AST walk safety limit exceeded during implicit control-flow analysis; fail closed";
 const tb03_copy_api_message =
     "raw copy API is banned (`@memcpy`, `std.mem.copyForwards`, `std.mem.copyBackwards`); " ++
     "use explicit copy helper (`stdx.copy_disjoint`, `stdx.copy_left`, or `stdx.copy_right`)";
@@ -3186,6 +3188,34 @@ fn detect_implicit_alloc_and_switch_else(
     if (file_path.len == 0) return;
     if (node == .root or @intFromEnum(node) >= tree.nodes.len) return;
 
+    try detect_implicit_alloc_and_switch_else_with_limit(
+        allocator,
+        tree,
+        source,
+        node,
+        file_path,
+        result,
+        ast_walk_nodes_max,
+    );
+}
+
+fn detect_implicit_alloc_and_switch_else_with_limit(
+    allocator: std.mem.Allocator,
+    tree: *const std.zig.Ast,
+    source: []const u8,
+    node: std.zig.Ast.Node.Index,
+    file_path: []const u8,
+    result: *Result,
+    max_nodes: usize,
+) !void {
+    assert(source.len > 0);
+    assert(file_path.len > 0);
+    assert(max_nodes > 0);
+    if (source.len == 0) return;
+    if (file_path.len == 0) return;
+    if (max_nodes == 0) return;
+    if (node == .root or @intFromEnum(node) >= tree.nodes.len) return;
+
     var role_index = roles.SemanticIndex.init(allocator, tree);
     defer role_index.deinit();
 
@@ -3199,11 +3229,73 @@ fn detect_implicit_alloc_and_switch_else(
     };
 
     ast_walk.walk_with_options(tree, node, &ctx, implicit_visit_node, .{
-        .max_nodes = ast_walk_nodes_max,
+        .max_nodes = max_nodes,
     }) catch |err| {
-        if (err == error.AstWalkLimit) return;
+        if (err == error.AstWalkLimit) {
+            try append_diag(
+                result,
+                .critical,
+                .N02_BOUNDED_LOOPS,
+                file_path,
+                implicit_walk_limit_message,
+            );
+            return;
+        }
         return err;
     };
+}
+
+test "implicit walk limit emits deterministic critical diagnostic" {
+    const allocator = std.testing.allocator;
+    const fixture_path = "tests/fixtures/phase01_walk_limit.zig";
+    const source = try std.Io.Dir.cwd().readFileAllocOptions(
+        std.Options.debug_io,
+        fixture_path,
+        allocator,
+        std.Io.Limit.limited(64 * 1024),
+        .of(u8),
+        0,
+    );
+    defer allocator.free(source);
+
+    var tree = try std.zig.Ast.parse(allocator, source, .zig);
+    defer tree.deinit(allocator);
+
+    var body_node: std.zig.Ast.Node.Index = .root;
+    for (tree.rootDecls()) |decl| {
+        if (tree.nodes.items(.tag)[@intFromEnum(decl)] != .fn_decl) continue;
+        var proto_buf: [1]std.zig.Ast.Node.Index = undefined;
+        const proto = tree.fullFnProto(&proto_buf, decl) orelse continue;
+        const name_token = proto.name_token orelse continue;
+        if (!std.mem.eql(u8, tree.tokenSlice(name_token), "main")) continue;
+        body_node = tree.nodeData(decl).node_and_node[1];
+        break;
+    }
+    try std.testing.expect(body_node != .root);
+
+    var result = Result.init(allocator);
+    defer result.deinit();
+
+    try detect_implicit_alloc_and_switch_else_with_limit(
+        allocator,
+        &tree,
+        source,
+        body_node,
+        fixture_path,
+        &result,
+        1,
+    );
+
+    try std.testing.expectEqual(@as(usize, 1), result.critical_count);
+    try std.testing.expectEqual(@as(usize, 1), result.diagnostics.items.len);
+    const diag = result.diagnostics.items[0];
+    try std.testing.expectEqual(Severity.critical, diag.severity);
+    try std.testing.expectEqual(rules.Id.N02_BOUNDED_LOOPS, diag.rule_id);
+    try std.testing.expectEqualStrings(
+        fixture_path,
+        diag.file_path,
+    );
+    try std.testing.expectEqualStrings(implicit_walk_limit_message, diag.message);
 }
 
 const ImplicitVisitCtx = struct {
