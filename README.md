@@ -328,7 +328,7 @@ Release tooling is scripted in `src/tools/release.zig` and enforces deterministi
 
 - source SHA (`--sha`, defaults to `git rev-parse HEAD`)
 - fixed target order (`x86_64-linux`, `aarch64-linux`, `x86_64-windows`, `aarch64-macos`)
-- mandatory quality gates (`test`, `precision-check`, `check-strict`)
+- mandatory quality gates (`test`, `precision-check`, `run -- --gates policy,perf ./src/libtigercheck`)
 - metadata artifacts (`RELEASE_METADATA`, `RELEASE_NOTES.md`, `SHA256SUMS`)
 
 Local dry-run (build + package + checksums + metadata, no publish):

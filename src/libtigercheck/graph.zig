@@ -128,12 +128,18 @@ pub fn build_from_path(allocator: std.mem.Allocator, input_path: []const u8) !Ca
     assert(input_path.len > 0);
     assert(std.mem.indexOfScalar(u8, input_path, 0) == null);
     if (input_path.len == 0) return error.InvalidInputPath;
-    return build_from_paths(allocator, &.{input_path});
+    var input_paths = std.array_list.Managed([]const u8).init(allocator);
+    defer input_paths.deinit();
+    try input_paths.append(input_path);
+    return build_from_paths(allocator, &input_paths);
 }
 
-pub fn build_from_paths(allocator: std.mem.Allocator, input_paths: []const []const u8) !CallGraph {
-    assert(input_paths.len > 0);
-    if (input_paths.len == 0) return error.InvalidInputPath;
+pub fn build_from_paths(
+    allocator: std.mem.Allocator,
+    input_paths: *const std.array_list.Managed([]const u8),
+) !CallGraph {
+    assert(input_paths.items.len > 0);
+    if (input_paths.items.len == 0) return error.InvalidInputPath;
 
     var graph = CallGraph.init(allocator);
     errdefer graph.deinit();
@@ -143,7 +149,7 @@ pub fn build_from_paths(allocator: std.mem.Allocator, input_paths: []const []con
     var seen_files = std.StringHashMap(void).init(arena);
 
     const zig_file_queue_bound_limit: usize = 16384;
-    for (input_paths) |input_path| {
+    for (input_paths.items) |input_path| {
         assert(input_path.len > 0);
         assert(std.mem.indexOfScalar(u8, input_path, 0) == null);
         if (input_path.len == 0) return error.InvalidInputPath;

@@ -44,11 +44,11 @@ pub fn walk(
     context: *anyopaque,
     callback: VisitCallback,
 ) anyerror!void {
-    var bridge = LegacyBridge{
+    var bridge = VisitBridge{
         .context = context,
         .callback = callback,
     };
-    try walk_with_options(tree, node, &bridge, legacy_bridge_callback, .{});
+    try walk_with_options(tree, node, &bridge, bridge_callback, .{});
 }
 
 pub fn walk_with_options(
@@ -163,7 +163,7 @@ fn apply_visit_decision(
     }
 }
 
-const LegacyBridge = struct {
+const VisitBridge = struct {
     context: *anyopaque,
     callback: VisitCallback,
 };
@@ -180,12 +180,12 @@ const WalkFrame = struct {
     phase: WalkPhase,
 };
 
-fn legacy_bridge_callback(
+fn bridge_callback(
     tree: *const Ast,
     node: Ast.Node.Index,
     ctx_opaque: *anyopaque,
 ) anyerror!VisitDecision {
-    const bridge: *LegacyBridge = @ptrCast(@alignCast(ctx_opaque));
+    const bridge: *VisitBridge = @ptrCast(@alignCast(ctx_opaque));
     try bridge.callback(tree, node, bridge.context);
     return .visit_children;
 }

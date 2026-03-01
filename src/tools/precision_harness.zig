@@ -389,7 +389,12 @@ fn parse_case_expectation(
         return error.InvalidCorpusFileName;
     }
 
-    const expected_rule = try resolve_expected_rule_for_case(allocator, file_path, basename);
+    const expected_rule = try resolve_expected_rule_for_case(
+        allocator,
+        file_path,
+        basename,
+        expect_fail,
+    );
 
     return .{
         .expect_fail = expect_fail,
@@ -401,6 +406,7 @@ fn resolve_expected_rule_for_case(
     allocator: std.mem.Allocator,
     file_path: []const u8,
     basename: []const u8,
+    expect_fail: bool,
 ) !rules.Id {
     assert(file_path.len > 0);
     assert(basename.len > 0);
@@ -412,9 +418,10 @@ fn resolve_expected_rule_for_case(
     }
 
     const directive_rule = try parse_expect_rule_directive(allocator, file_path);
-    if (directive_rule) |rule_id| {
-        return rule_id;
+    if (expect_fail) {
+        return directive_rule orelse error.MissingExpectRuleDirective;
     }
+    if (directive_rule) |rule_id| return rule_id;
     return parse_rule_from_case_basename(basename);
 }
 

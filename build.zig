@@ -55,6 +55,17 @@ fn parse_build_config(b: *std.Build, optimize: std.builtin.OptimizeMode) BuildCo
         "Perf budget for bench step (ms)",
     ) orelse default_perf_budget_ms;
     assert(perf_budget_ms > 0);
+    const analyze_path_opt = b.option(
+        []const u8,
+        "analyze-path",
+        "Path analyzed by bench step",
+    );
+    const analyze_path = analyze_path_opt orelse "./src";
+    const off_rules = b.option(
+        []const u8,
+        "off-rules",
+        "Comma-separated rule IDs forced to off action",
+    ) orelse "";
     const corpus_min_cases_per_kind = b.option(
         u32,
         "corpus-min-cases-per-kind",
@@ -65,25 +76,6 @@ fn parse_build_config(b: *std.Build, optimize: std.builtin.OptimizeMode) BuildCo
         "corpus-strict-min-cases",
         "Fail corpus-audit when prefix depth is below minimum",
     ) orelse false;
-    const analyze_path_opt = b.option(
-        []const u8,
-        "analyze-path",
-        "Path analyzed by bench step",
-    );
-    const legacy_style_path_opt = b.option(
-        []const u8,
-        "style-path",
-        "Deprecated alias for -Danalyze-path",
-    );
-    if (analyze_path_opt == null and legacy_style_path_opt != null) {
-        std.log.warn("build option -Dstyle-path is deprecated; use -Danalyze-path", .{});
-    }
-    const analyze_path = analyze_path_opt orelse legacy_style_path_opt orelse "./src";
-    const off_rules = b.option(
-        []const u8,
-        "off-rules",
-        "Comma-separated rule IDs forced to off action",
-    ) orelse "";
     return .{
         .analyze_path = analyze_path,
         .off_rules = off_rules,

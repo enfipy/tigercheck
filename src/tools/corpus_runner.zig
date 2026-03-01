@@ -8,11 +8,6 @@ const RunStats = struct {
     errs: usize = 0,
 };
 
-const ExpectedRulePrefixes = struct {
-    primary: ?[]const u8 = null,
-    fallback: ?[]const u8 = null,
-};
-
 const ExpectationDirectives = struct {
     rule_id: ?[]const u8 = null,
     message_substring: ?[]const u8 = null,
@@ -34,7 +29,6 @@ const TigercheckJSONRun = struct {
 };
 
 const TestObservation = struct {
-    expected_prefixes: ExpectedRulePrefixes,
     expected_rule_seen: bool,
     expected_message_seen: bool,
     exited_ok: bool,
@@ -57,17 +51,7 @@ pub fn main(init: std.process.Init) !void {
     if (tiger_check_bin.len == 0) fatal("missing tigercheck binary path argument");
     if (corpus_dir.len == 0) fatal("missing corpus directory argument");
 
-    var legacy_prefix_fallback = false;
-    if (args.next()) |arg| {
-        if (std.mem.eql(u8, arg, "--legacy-prefix-fallback")) {
-            legacy_prefix_fallback = true;
-        } else {
-            fatal("unknown argument; expected --legacy-prefix-fallback");
-        }
-    }
-    if (args.next() != null) {
-        fatal("too many arguments");
-    }
+    if (args.next() != null) fatal("too many arguments");
     assert(tiger_check_bin.len > 0);
     assert(corpus_dir.len > 0);
 
@@ -95,7 +79,6 @@ pub fn main(init: std.process.Init) !void {
             stdout,
             tiger_check_bin,
             file_path,
-            legacy_prefix_fallback,
             &stats,
         );
     }
@@ -120,7 +103,6 @@ fn process_test_file(
     stdout: *std.Io.Writer,
     tiger_check_bin: []const u8,
     file_path: []const u8,
-    legacy_prefix_fallback: bool,
     stats: *RunStats,
 ) !void {
     assert(file_path.len > 0);
@@ -143,7 +125,7 @@ fn process_test_file(
         if (directives.message_substring) |msg| allocator.free(msg);
     }
 
-    if (fail_case_requires_expect_rule(expect_fail, legacy_prefix_fallback, directives)) {
+    if (fail_case_requires_expect_rule(expect_fail, directives)) {
         try stdout.print(
             "  FAIL  {s} (strict mode requires // expect-rule: <RULE_ID> for fail cases)\n",
             .{basename},
@@ -177,7 +159,6 @@ fn process_test_file(
         run.parsed_output.value.diagnostics,
         run.result.term,
         directives,
-        legacy_prefix_fallback,
     );
 
     try apply_observation(
@@ -189,7 +170,6 @@ fn process_test_file(
         run.result,
         run.parsed_output.value.diagnostics,
         directives,
-        legacy_prefix_fallback,
         observation,
     );
 }
@@ -203,7 +183,6 @@ fn apply_observation(
     result: std.process.RunResult,
     diagnostics: []const JSONDiagnostic,
     directives: ExpectationDirectives,
-    legacy_prefix_fallback: bool,
     observation: TestObservation,
 ) !void {
     assert(basename.len > 0);
@@ -222,7 +201,6 @@ fn apply_observation(
         result,
         diagnostics,
         directives,
-        legacy_prefix_fallback,
         observation,
     );
     stats.failed += 1;
@@ -230,11 +208,9 @@ fn apply_observation(
 
 fn fail_case_requires_expect_rule(
     expect_fail: bool,
-    legacy_prefix_fallback: bool,
     directives: ExpectationDirectives,
 ) bool {
     if (!expect_fail) return false;
-    if (legacy_prefix_fallback) return false;
     return directives.rule_id == null;
 }
 
@@ -292,26 +268,21 @@ fn observe_test_result(
     diagnostics: []const JSONDiagnostic,
     term: std.process.Child.Term,
     directives: ExpectationDirectives,
-    legacy_prefix_fallback: bool,
 ) TestObservation {
     assert(basename.len > 0);
     assert(diagnostics.len <= 4096);
     assert(!expect_pass or directives.rule_id == null);
     if (basename.len == 0) {
         return .{
-            .expected_prefixes = .{},
             .expected_rule_seen = false,
             .expected_message_seen = false,
             .exited_ok = false,
             .test_passed = false,
         };
     }
-    const expected_prefixes = expected_rule_prefixes_for_fail_case(basename);
     const expected_rule_seen = expected_output_matches_expectation(
         diagnostics,
-        expected_prefixes,
         directives.rule_id,
-        legacy_prefix_fallback,
     );
     const expected_message_seen = expected_output_matches_message(
         diagnostics,
@@ -333,7 +304,6 @@ fn observe_test_result(
     }
 
     return .{
-        .expected_prefixes = expected_prefixes,
         .expected_rule_seen = expected_rule_seen,
         .expected_message_seen = expected_message_seen,
         .exited_ok = exited_ok,
@@ -349,7 +319,6 @@ fn report_test_failure(
     result: std.process.RunResult,
     diagnostics: []const JSONDiagnostic,
     directives: ExpectationDirectives,
-    legacy_prefix_fallback: bool,
     observation: TestObservation,
 ) !void {
     assert(basename.len > 0);
@@ -375,7 +344,6 @@ fn report_test_failure(
         expect_fail,
         diagnostics,
         directives,
-        legacy_prefix_fallback,
         observation,
     );
     try print_process_output(stdout, result);
@@ -391,7 +359,6 @@ fn print_failure_expectations(
     expect_fail: bool,
     diagnostics: []const JSONDiagnostic,
     directives: ExpectationDirectives,
-    legacy_prefix_fallback: bool,
     observation: TestObservation,
 ) !void {
     assert(diagnostics.len <= 4096);
@@ -402,9 +369,7 @@ fn print_failure_expectations(
     if (expect_fail and !observation.expected_rule_seen) {
         try print_expected_rule_expectation(
             stdout,
-            observation.expected_prefixes,
             directives.rule_id,
-            legacy_prefix_fallback,
         );
         try print_observed_rule_ids(stdout, diagnostics);
     }
@@ -425,24 +390,6 @@ fn print_process_output(stdout: *std.Io.Writer, result: std.process.RunResult) !
     if (result.stderr.len > 0) {
         try stdout.print("        stderr: {s}\n", .{std.mem.trimEnd(u8, result.stderr, "\n")});
     }
-}
-
-fn expected_rule_prefixes_for_fail_case(basename: []const u8) ExpectedRulePrefixes {
-    assert(basename.len > 0);
-    assert(basename.len <= 255);
-    if (basename.len == 0) return .{};
-    var out = ExpectedRulePrefixes{};
-    if (!corpus_common.is_fail_case_basename(basename)) return out;
-    if (!corpus_common.is_zig_case_file(basename)) return out;
-    const stem_start = corpus_common.case_fail_prefix().len;
-    const stem_end = basename.len - corpus_common.zig_file_extension().len;
-    const stem = basename[stem_start..stem_end];
-    const sep = std.mem.indexOfScalar(u8, stem, '_') orelse return out;
-    if (sep == 0) return out;
-    const prefix = stem[0..sep];
-    out.primary = prefix;
-    out.fallback = corpus_common.fallback_rule_prefix(prefix);
-    return out;
 }
 
 fn parse_expectation_directives(
@@ -501,12 +448,9 @@ fn parse_expectation_directive_line(
 
 fn expected_output_matches_expectation(
     diagnostics: []const JSONDiagnostic,
-    expected_prefixes: ExpectedRulePrefixes,
     direct_rule_id: ?[]const u8,
-    legacy_prefix_fallback: bool,
 ) bool {
     assert(direct_rule_id == null or direct_rule_id.?.len > 0);
-    assert(expected_prefixes.primary != null or expected_prefixes.fallback == null);
     if (diagnostics.len == 0 and direct_rule_id != null) {
         return false;
     }
@@ -514,10 +458,7 @@ fn expected_output_matches_expectation(
         if (rule_id.len == 0) return false;
         return diagnostics_mention_rule_id(diagnostics, rule_id);
     }
-    if (!legacy_prefix_fallback) {
-        return false;
-    }
-    return expected_output_matches_rule_prefixes(diagnostics, expected_prefixes);
+    return false;
 }
 
 fn expected_output_matches_message(
@@ -540,35 +481,6 @@ fn expected_output_matches_message(
     return false;
 }
 
-fn expected_output_matches_rule_prefixes(
-    diagnostics: []const JSONDiagnostic,
-    expected: ExpectedRulePrefixes,
-) bool {
-    assert(diagnostics.len <= 4096);
-    assert(expected.primary != null or expected.fallback == null);
-    assert(expected.primary == null or expected.primary.?.len > 0);
-    assert(expected.fallback == null or expected.fallback.?.len > 0);
-    if (diagnostics.len > 4096) {
-        return false;
-    }
-    if (expected.fallback != null and expected.primary == null) {
-        return false;
-    }
-    if (diagnostics.len == 0) {
-        return expected.primary == null;
-    }
-    const primary = expected.primary orelse return true;
-    if (primary.len == 0) return false;
-    if (!diagnostics_mention_rule_prefix(diagnostics, primary)) {
-        if (expected.fallback) |fallback| {
-            if (fallback.len == 0) return false;
-            return diagnostics_mention_rule_prefix(diagnostics, fallback);
-        }
-        return false;
-    }
-    return true;
-}
-
 fn diagnostics_mention_rule_id(diagnostics: []const JSONDiagnostic, rule_id: []const u8) bool {
     assert(rule_id.len > 0);
     if (rule_id.len == 0) return false;
@@ -582,9 +494,7 @@ fn diagnostics_mention_rule_id(diagnostics: []const JSONDiagnostic, rule_id: []c
 
 fn print_expected_rule_expectation(
     stdout: *std.Io.Writer,
-    expected: ExpectedRulePrefixes,
     direct_rule_id: ?[]const u8,
-    legacy_prefix_fallback: bool,
 ) !void {
     assert(direct_rule_id == null or direct_rule_id.?.len > 0);
     if (direct_rule_id != null and direct_rule_id.?.len == 0) return;
@@ -599,31 +509,8 @@ fn print_expected_rule_expectation(
         return;
     }
 
-    if (!legacy_prefix_fallback) {
-        try stdout.writeAll(
-            "        expected // expect-rule: <RULE_ID> directive for fail case\n",
-        );
-        return;
-    }
-
-    assert(expected.primary != null or expected.fallback == null);
-    if (expected.primary == null and expected.fallback != null) return;
-
-    const primary = expected.primary orelse return;
-    assert(primary.len > 0);
-    if (primary.len == 0) return;
-    if (expected.fallback) |fallback| {
-        assert(fallback.len > 0);
-        if (fallback.len == 0) return;
-        try stdout.print(
-            "        expected rule prefix: [{s}_ or [{s}_ (not found in diagnostics)\n",
-            .{ primary, fallback },
-        );
-        return;
-    }
-    try stdout.print(
-        "        expected rule prefix: [{s}_ (not found in diagnostics)\n",
-        .{primary},
+    try stdout.writeAll(
+        "        expected // expect-rule: <RULE_ID> directive for fail case\n",
     );
 }
 
@@ -646,18 +533,6 @@ fn print_observed_rule_ids(stdout: *std.Io.Writer, diagnostics: []const JSONDiag
         try stdout.writeAll(diag.rule_id);
     }
     try stdout.writeAll("\n");
-}
-
-fn diagnostics_mention_rule_prefix(diagnostics: []const JSONDiagnostic, prefix: []const u8) bool {
-    assert(prefix.len > 0);
-    if (prefix.len == 0) return false;
-    for (diagnostics) |diag| {
-        const sep = std.mem.indexOfScalar(u8, diag.rule_id, '_') orelse continue;
-        if (std.mem.eql(u8, diag.rule_id[0..sep], prefix)) {
-            return true;
-        }
-    }
-    return false;
 }
 
 fn fatal(msg: []const u8) noreturn {
