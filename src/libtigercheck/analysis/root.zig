@@ -16,13 +16,8 @@ const pedantic = @import("pedantic.zig");
 const style_quality = @import("style_quality.zig");
 const taint_phase = @import("taint_phase.zig");
 const diagnostics = @import("diagnostics.zig");
-const test_depth_matrix = @import("test_depth_matrix.zig");
 
 const append_diag = diagnostics.append;
-
-comptime {
-    _ = test_depth_matrix.analyzer_core_targets.len;
-}
 
 pub const Severity = diagnostics.Severity;
 pub const Diagnostic = diagnostics.Diagnostic;
