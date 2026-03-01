@@ -1,3 +1,4 @@
+// expect-rule: N04_FUNCTION_SIZE
 pub fn main() void {
     var x: usize = 0;
     x += 1;

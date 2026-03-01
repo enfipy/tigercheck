@@ -1,6 +1,7 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const Ast = std.zig.Ast;
+const parsed_file = @import("parsed_file.zig");
 const rules = @import("rules.zig");
 
 pub const StyleDiagnostic = struct {
@@ -17,23 +18,10 @@ pub fn analyze_file(
     assert(file_path.len > 0);
     assert(diagnostics.items.len <= diagnostics.capacity);
     if (file_path.len == 0) return error.InvalidInputPath;
-    const source = try std.Io.Dir.cwd().readFileAllocOptions(
-        std.Options.debug_io,
-        file_path,
-        allocator,
-        std.Io.Limit.limited(16 * 1024 * 1024),
-        .of(u8),
-        0,
-    );
-    defer allocator.free(source);
+    var parsed = try parsed_file.parse(allocator, file_path);
+    defer parsed.deinit();
 
-    const tree = try Ast.parse(allocator, source, .zig);
-    defer {
-        var t = tree;
-        t.deinit(allocator);
-    }
-
-    try analyze_file_with_parsed(allocator, file_path, &tree, diagnostics);
+    try analyze_file_with_parsed(allocator, file_path, &parsed.tree, diagnostics);
 }
 
 pub fn analyze_file_with_parsed(

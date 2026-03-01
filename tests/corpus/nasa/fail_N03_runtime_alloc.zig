@@ -1,3 +1,4 @@
+// expect-rule: N03_STATIC_MEMORY
 const std = @import("std");
 
 pub fn run() void {

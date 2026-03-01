@@ -1,3 +1,4 @@
+// expect-rule: TS04_ASSERTIONS
 fn process(buf: []u8) void {
     _ = buf.len;
 }

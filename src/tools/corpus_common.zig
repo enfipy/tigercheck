@@ -15,15 +15,6 @@ const canonical_aliases = [_]CanonicalAlias{
     .{ .from = "TS10", .to = "N10" },
 };
 
-pub fn fallback_rule_prefix(primary_prefix: []const u8) ?[]const u8 {
-    assert(primary_prefix.len > 0);
-    assert(primary_prefix.len <= 8);
-    if (primary_prefix.len == 0) {
-        return null;
-    }
-    return alias_for_prefix(primary_prefix);
-}
-
 pub fn case_pass_prefix() []const u8 {
     return "pass_";
 }

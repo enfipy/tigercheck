@@ -1,3 +1,4 @@
+// expect-rule: TS23_LARGE_ARG_POINTER
 fn process_payload(payload: [256]u8) void {
     _ = payload;
 }

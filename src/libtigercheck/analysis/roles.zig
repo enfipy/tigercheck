@@ -370,3 +370,16 @@ fn param_type_is_mutable_pointer(tree: *const Ast, type_expr: Ast.Node.Index) bo
 fn walk_failed(err: anyerror) noreturn {
     std.debug.panic("internal invariant violated: semantic walk failed: {}", .{err});
 }
+
+test "token role hints are case-insensitive" {
+    try std.testing.expect(token_has_queue_role_hint("RingQueue"));
+    try std.testing.expect(token_has_event_role_hint("NextEvent"));
+    try std.testing.expect(token_has_control_role_hint("CONFIG"));
+    try std.testing.expect(token_has_data_role_hint("ReplicaBatch"));
+    try std.testing.expect(token_has_boundary_role_hint("RouteBridge"));
+}
+
+test "contains_ascii_case_insensitive handles miss and hit" {
+    try std.testing.expect(contains_ascii_case_insensitive("EventReceiver", "receiver"));
+    try std.testing.expect(!contains_ascii_case_insensitive("Queue", "socket"));
+}

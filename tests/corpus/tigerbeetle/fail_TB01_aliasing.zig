@@ -1,3 +1,4 @@
+// expect-rule: TB01_ALIASING
 const std = @import("std");
 const assert = std.debug.assert;
 

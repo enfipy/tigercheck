@@ -1,3 +1,4 @@
+// expect-rule: TB04_CONTEXT_BUNDLE
 fn walk_implicit_stream_related(
     tree: u32,
     source: u32,

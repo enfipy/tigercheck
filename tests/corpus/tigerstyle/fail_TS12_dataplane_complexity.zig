@@ -1,3 +1,4 @@
+// expect-rule: TS12_PLANE_BOUNDARY
 pub fn main() void {
     var x: i32 = 0;
     if (x == 0) x += 1;

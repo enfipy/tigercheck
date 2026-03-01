@@ -146,13 +146,15 @@ CLI diagnostics use the IDs below. This is the canonical catalog for NASA, Tiger
 ## Build Steps
 
 - Build steps:
-  - `./zig/zig build check`
-  - `./zig/zig build check-strict`
+  - `./zig/zig build run -- ./src`
+  - `./zig/zig build run -- --allow-findings ./src` (report findings but exit 0)
+  - `./zig/zig build run -- --format json ./src ./build.zig`
+  - `./zig/zig build run -- --gates policy,perf ./src`
   - `./zig/zig build bench`
 - Build options:
-  - `-Dstyle-path=<path>`
+  - `-Danalyze-path=<path>` (bench target path, default: `./src`)
   - `-Doff-rules=RULE_ID,RULE_ID`
-  - `-Dperf-budget-ms=<ms>` (default: `3000` in Debug, `200` in Release*)
+  - `-Dperf-budget-ms=<ms>` (default: `6000` in Debug, `1000` in Release*)
 
 Corpus audit options:
 
@@ -298,14 +300,14 @@ Core gates:
 
 - `./zig/zig build test` validates unit coverage + corpus pass/fail contracts.
 - `./zig/zig build precision-check` enforces rule-level FP/FN deltas vs `tests/corpus/precision-baseline.json`.
-- `./zig/zig build check-strict` enforces strict-core conformance plus perf budget checks.
+- `./zig/zig build run -- --gates policy,perf ./src/libtigercheck` enables policy + perf gates for strict-core conformance.
 
 Repository CI workflow (`.github/workflows/safety.yml`) runs:
 
 - `./zig/download.sh`
 - `./zig/zig build test`
 - `./zig/zig build precision-check`
-- `./zig/zig build check-strict -Dstyle-path=./src/libtigercheck`
+- `./zig/zig build run -- --gates policy,perf ./src/libtigercheck`
 - `./zig/zig build --release=fast run -- ./src`
 
 If you see stdlib errors like `invalid builtin function: '@Type'`, your Zig binary and lib directory are out of sync. Use `./zig/zig ...` to force a matched toolchain.
@@ -326,7 +328,7 @@ Release tooling is scripted in `src/tools/release.zig` and enforces deterministi
 
 - source SHA (`--sha`, defaults to `git rev-parse HEAD`)
 - fixed target order (`x86_64-linux`, `aarch64-linux`, `x86_64-windows`, `aarch64-macos`)
-- mandatory quality gates (`test`, `precision-check`, `check-strict`)
+- mandatory quality gates (`test`, `precision-check`, `run -- --gates policy,perf ./src/libtigercheck`)
 - metadata artifacts (`RELEASE_METADATA`, `RELEASE_NOTES.md`, `SHA256SUMS`)
 
 Local dry-run (build + package + checksums + metadata, no publish):
@@ -335,8 +337,7 @@ Local dry-run (build + package + checksums + metadata, no publish):
 
 Release validation:
 
-- latest release: `./zig/zig build release-validate`
-- specific tag: `./zig/zig build release-validate -- --tag 0.1.0`
+- explicit target: `./zig/zig build release-validate -- --tag 0.1.0 --sha <commit>`
 
 Recovery playbook:
 

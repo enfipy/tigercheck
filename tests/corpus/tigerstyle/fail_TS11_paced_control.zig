@@ -1,3 +1,4 @@
+// expect-rule: TS11_PACED_CONTROL
 const EventSource = struct {
     fn recv(self: *EventSource) ?u32 {
         _ = self;

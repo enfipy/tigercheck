@@ -1,3 +1,4 @@
+// expect-rule: TS06_POS_NEG_ASSERT
 fn assert(cond: bool) void {
     if (!cond) unreachable;
 }

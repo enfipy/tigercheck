@@ -1,3 +1,4 @@
+// expect-rule: TS07_MEMORY_PHASE
 const std = @import("std");
 
 pub fn main() void {

@@ -2,6 +2,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Ast = std.zig.Ast;
 const ast_walk = @import("ast_walk.zig");
+const parsed_file = @import("parsed_file.zig");
 const Count = u32;
 
 pub const FunctionMetric = struct {
@@ -52,23 +53,10 @@ pub const FileMetrics = struct {
 pub fn analyze_file(allocator: std.mem.Allocator, file_path: []const u8) !FileMetrics {
     assert(file_path.len > 0);
     if (file_path.len == 0) return error.InvalidInputPath;
-    const source = try std.Io.Dir.cwd().readFileAllocOptions(
-        std.Options.debug_io,
-        file_path,
-        allocator,
-        std.Io.Limit.limited(16 * 1024 * 1024),
-        .of(u8),
-        0,
-    );
-    defer allocator.free(source);
+    var parsed = try parsed_file.parse(allocator, file_path);
+    defer parsed.deinit();
 
-    const tree = try Ast.parse(allocator, source, .zig);
-    defer {
-        var t = tree;
-        t.deinit(allocator);
-    }
-
-    return analyze_file_with_parsed(allocator, file_path, source, &tree);
+    return analyze_file_with_parsed(allocator, file_path, parsed.source, &parsed.tree);
 }
 
 pub fn analyze_file_with_parsed(

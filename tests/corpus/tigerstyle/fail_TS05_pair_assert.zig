@@ -1,3 +1,4 @@
+// expect-rule: TS05_PAIR_ASSERT
 fn assert(cond: bool) void {
     if (!cond) unreachable;
 }

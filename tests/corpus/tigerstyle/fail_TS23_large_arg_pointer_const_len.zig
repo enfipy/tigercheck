@@ -1,3 +1,4 @@
+// expect-rule: TS23_LARGE_ARG_POINTER
 const payload_size: usize = 128;
 
 fn process_payload(payload: [payload_size]u8) void {

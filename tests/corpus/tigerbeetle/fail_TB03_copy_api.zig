@@ -1,3 +1,4 @@
+// expect-rule: TB03_COPY_API
 const std = @import("std");
 
 pub fn main() void {

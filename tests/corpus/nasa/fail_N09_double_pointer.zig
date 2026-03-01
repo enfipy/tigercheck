@@ -1,3 +1,4 @@
+// expect-rule: N09_POINTER_DISCIPLINE
 fn walk(root: **u8) void {
     _ = root;
 }

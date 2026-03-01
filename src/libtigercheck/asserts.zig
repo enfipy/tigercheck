@@ -3,6 +3,8 @@ const assert = std.debug.assert;
 const Ast = std.zig.Ast;
 const metrics = @import("metrics.zig");
 const ast_walk = @import("ast_walk.zig");
+const call_expr = @import("analysis/call_expr.zig");
+const parsed_file = @import("parsed_file.zig");
 const Count = u32;
 
 pub const FunctionAssertFacts = struct {
@@ -72,23 +74,10 @@ pub fn analyze_file(
 ) !FileAssertFacts {
     assert(file_path.len > 0);
     if (file_path.len == 0) return error.InvalidInputPath;
-    const source = try std.Io.Dir.cwd().readFileAllocOptions(
-        std.Options.debug_io,
-        file_path,
-        allocator,
-        std.Io.Limit.limited(16 * 1024 * 1024),
-        .of(u8),
-        0,
-    );
-    defer allocator.free(source);
+    var parsed = try parsed_file.parse(allocator, file_path);
+    defer parsed.deinit();
 
-    const tree = try Ast.parse(allocator, source, .zig);
-    defer {
-        var t = tree;
-        t.deinit(allocator);
-    }
-
-    return analyze_file_with_parsed(allocator, file_path, file_metrics, &tree);
+    return analyze_file_with_parsed(allocator, file_path, file_metrics, &parsed.tree);
 }
 
 pub fn analyze_file_with_parsed(
@@ -657,52 +646,11 @@ fn expr_param_ref_from_binary(
 }
 
 fn is_assert_call(tree: *const Ast, fn_expr: Ast.Node.Index) bool {
-    var path: [4][]const u8 = undefined;
+    var path: [6][]const u8 = undefined;
     var len: u8 = 0;
-    collect_call_path(tree, fn_expr, &path, &len);
+    call_expr.collect_call_path(tree, fn_expr, &path, &len);
     if (len == 0) return false;
     return std.mem.eql(u8, path[@as(usize, len - 1)], "assert");
-}
-
-fn collect_call_path(
-    tree: *const Ast,
-    expr_node: Ast.Node.Index,
-    path: *[4][]const u8,
-    len: *u8,
-) void {
-    assert(tree.nodes.len > 0);
-    assert(tree.nodes.items(.main_token).len == tree.nodes.len);
-    if (expr_node == .root or @intFromEnum(expr_node) >= tree.nodes.len) return;
-    switch (tree.nodes.items(.tag)[@intFromEnum(expr_node)]) {
-        .identifier => {
-            const token = tree.nodes.items(.main_token)[@intFromEnum(expr_node)];
-            if (@as(usize, len.*) < path.len) {
-                path[@as(usize, len.*)] = tree.tokenSlice(token);
-                len.* += 1;
-            }
-        },
-        .field_access => {
-            const lhs, const field_token = tree.nodeData(expr_node).node_and_token;
-            collect_call_path(tree, lhs, path, len);
-            if (@as(usize, len.*) < path.len) {
-                path[@as(usize, len.*)] = tree.tokenSlice(field_token);
-                len.* += 1;
-            }
-        },
-        .grouped_expression,
-        .unwrap_optional,
-        => {
-            const child = tree.nodeData(expr_node).node_and_token[0];
-            collect_call_path(tree, child, path, len);
-        },
-        .@"try",
-        .@"comptime",
-        => {
-            const child = tree.nodeData(expr_node).node;
-            collect_call_path(tree, child, path, len);
-        },
-        else => {},
-    }
 }
 
 fn expr_has_bool_and(tree: *const Ast, node: Ast.Node.Index) bool {

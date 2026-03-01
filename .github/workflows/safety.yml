@@ -25,7 +25,7 @@ jobs:
         run: ./zig/zig build precision-check
 
       - name: Strict conformance
-        run: ./zig/zig build check-strict -Dstyle-path=./src/libtigercheck
+        run: ./zig/zig build run -- --gates policy,perf ./src/libtigercheck
 
       - name: Pedantic source scan
         run: ./zig/zig build --release=fast run -- ./src

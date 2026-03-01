@@ -288,3 +288,13 @@ fn is_batch_boundary_call_name(name: []const u8) bool {
         std.mem.eql(u8, name, "submitBatch") or
         std.mem.eql(u8, name, "submit_batch");
 }
+
+test "event pacing call-name classifiers" {
+    try std.testing.expect(is_external_event_call_name("next"));
+    try std.testing.expect(is_external_event_call_name("recv"));
+    try std.testing.expect(!is_external_event_call_name("compute"));
+
+    try std.testing.expect(is_batch_boundary_call_name("flush"));
+    try std.testing.expect(is_batch_boundary_call_name("process_batch"));
+    try std.testing.expect(!is_batch_boundary_call_name("append"));
+}

@@ -1,3 +1,4 @@
+// expect-rule: TS03_FIXED_WIDTH_TYPES
 const std = @import("std");
 
 // TS03: Using usize in function signature

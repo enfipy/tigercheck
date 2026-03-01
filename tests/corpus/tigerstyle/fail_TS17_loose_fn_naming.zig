@@ -1,3 +1,4 @@
+// expect-rule: TS17_SNAKE_CASE
 const User = struct {
     id: u32,
 };

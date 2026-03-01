@@ -142,3 +142,16 @@ fn note_segment_hits(role_index: *roles.SemanticIndex, segment: []const u8, hits
         hits.boundary = true;
     }
 }
+
+test "role mask notes control data boundary hits" {
+    var hits = RoleHits{};
+    role_mask_note_hits(roles.role_control_plane, &hits);
+    try std.testing.expect(hits.control);
+    try std.testing.expect(!hits.data);
+    try std.testing.expect(!hits.boundary);
+
+    role_mask_note_hits(roles.role_data_plane | roles.role_boundary, &hits);
+    try std.testing.expect(hits.control);
+    try std.testing.expect(hits.data);
+    try std.testing.expect(hits.boundary);
+}

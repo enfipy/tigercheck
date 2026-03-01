@@ -3,6 +3,8 @@ const assert = std.debug.assert;
 const Ast = std.zig.Ast;
 const graph = @import("graph.zig");
 const ast_walk = @import("ast_walk.zig");
+const call_expr = @import("analysis/call_expr.zig");
+const parsed_file = @import("parsed_file.zig");
 
 pub const FunctionFacts = struct {
     canonical_name: []const u8,
@@ -44,18 +46,18 @@ const FunctionWalkState = struct {
 
 const CallPath = struct {
     parts: [8][]const u8 = undefined,
-    len: usize = 0,
+    len: u8 = 0,
 
     fn append(self: *CallPath, value: []const u8) void {
-        if (self.len < self.parts.len) {
-            self.parts[self.len] = value;
+        if (@as(usize, self.len) < self.parts.len) {
+            self.parts[@as(usize, self.len)] = value;
             self.len += 1;
         }
     }
 
     fn last(self: *const CallPath) ?[]const u8 {
         if (self.len == 0) return null;
-        return self.parts[self.len - 1];
+        return self.parts[@as(usize, self.len - 1)];
     }
 };
 
@@ -67,23 +69,10 @@ pub fn analyze_file(
     assert(file_path.len > 0);
     assert(call_graph.files.items.len <= call_graph.files.capacity);
     if (file_path.len == 0) return error.InvalidInputPath;
-    const source = try std.Io.Dir.cwd().readFileAllocOptions(
-        std.Options.debug_io,
-        file_path,
-        allocator,
-        std.Io.Limit.limited(16 * 1024 * 1024),
-        .of(u8),
-        0,
-    );
-    defer allocator.free(source);
+    var parsed = try parsed_file.parse(allocator, file_path);
+    defer parsed.deinit();
 
-    const tree = try Ast.parse(allocator, source, .zig);
-    defer {
-        var t = tree;
-        t.deinit(allocator);
-    }
-
-    return analyze_file_with_parsed(allocator, call_graph, file_path, &tree);
+    return analyze_file_with_parsed(allocator, call_graph, file_path, &parsed.tree);
 }
 
 pub fn analyze_file_with_parsed(
@@ -299,7 +288,7 @@ fn note_call(tree: *const Ast, node: Ast.Node.Index, ctx: *WalkCtx) void {
     var call_buf: [1]Ast.Node.Index = undefined;
     const call = tree.fullCall(&call_buf, node) orelse return;
     var path: CallPath = .{};
-    collect_call_path(tree, call.ast.fn_expr, &path);
+    call_expr.collect_call_path_into(8, tree, call.ast.fn_expr, &path.parts, &path.len);
     if (is_forbidden_alloc_path(&path)) {
         ctx.state.has_forbidden_alloc = true;
     }
@@ -791,7 +780,7 @@ fn bound_node_is_ast_token_call(tree: *const Ast, node: Ast.Node.Index) bool {
             var call_buf: [1]Ast.Node.Index = undefined;
             const call = tree.fullCall(&call_buf, node) orelse return false;
             var path: CallPath = .{};
-            collect_call_path(tree, call.ast.fn_expr, &path);
+            call_expr.collect_call_path_into(8, tree, call.ast.fn_expr, &path.parts, &path.len);
             const method_name = path.last() orelse return false;
             if (std.mem.eql(u8, method_name, "firstToken")) return true;
             return std.mem.eql(u8, method_name, "lastToken");
@@ -883,7 +872,7 @@ fn bound_node_is_green_call(
             var call_buf: [1]Ast.Node.Index = undefined;
             const call = tree.fullCall(&call_buf, node) orelse return false;
             var path: CallPath = .{};
-            collect_call_path(tree, call.ast.fn_expr, &path);
+            call_expr.collect_call_path_into(8, tree, call.ast.fn_expr, &path.parts, &path.len);
             return call_is_green_function(file_path, &path, green_functions);
         },
         else => return false,
@@ -1045,47 +1034,6 @@ fn call_is_green_function(
         }
     }
     return false;
-}
-
-fn collect_call_path(tree: *const Ast, expr_node: Ast.Node.Index, path: *CallPath) void {
-    assert(tree.nodes.len > 0);
-    assert(tree.nodes.items(.main_token).len == tree.nodes.len);
-    if (expr_node == .root or @intFromEnum(expr_node) >= tree.nodes.len) return;
-
-    var current = expr_node;
-    var fields: [8][]const u8 = undefined;
-    var fields_len: usize = 0;
-
-    while (current != .root and @intFromEnum(current) < tree.nodes.len) {
-        switch (tree.nodes.items(.tag)[@intFromEnum(current)]) {
-            .identifier => {
-                const token = tree.nodes.items(.main_token)[@intFromEnum(current)];
-                path.append(tree.tokenSlice(token));
-                break;
-            },
-            .field_access => {
-                const lhs, const field_token = tree.nodeData(current).node_and_token;
-                if (fields_len < fields.len) {
-                    fields[fields_len] = tree.tokenSlice(field_token);
-                    fields_len += 1;
-                }
-                current = lhs;
-            },
-            .grouped_expression => {
-                current = tree.nodeData(current).node_and_token[0];
-            },
-            .@"try" => {
-                current = tree.nodeData(current).node;
-            },
-            else => return,
-        }
-    }
-
-    var i = fields_len;
-    while (i > 0) {
-        i -= 1;
-        path.append(fields[i]);
-    }
 }
 
 fn is_forbidden_alloc_path(path: *const CallPath) bool {

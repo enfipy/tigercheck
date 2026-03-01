@@ -402,3 +402,17 @@ fn token_has_bound_hint(token: []const u8) bool {
         roles.contains_ascii_case_insensitive(token, "bound") or
         roles.contains_ascii_case_insensitive(token, "quota");
 }
+
+test "queue growth tag classifiers" {
+    try std.testing.expect(is_call_tag(.call));
+    try std.testing.expect(is_call_tag(.call_one_comma));
+    try std.testing.expect(!is_call_tag(.identifier));
+
+    try std.testing.expect(is_if_tag(.@"if"));
+    try std.testing.expect(is_if_tag(.if_simple));
+    try std.testing.expect(!is_if_tag(.@"while"));
+
+    try std.testing.expect(is_while_tag(.@"while"));
+    try std.testing.expect(is_while_tag(.while_cont));
+    try std.testing.expect(!is_while_tag(.if_simple));
+}

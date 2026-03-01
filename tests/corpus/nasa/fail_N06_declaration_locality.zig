@@ -1,3 +1,4 @@
+// expect-rule: N06_SCOPE_MINIMIZATION
 pub fn main() void {
     const delayed_count: u32 = 1;
 

@@ -2,6 +2,8 @@ const std = @import("std");
 const assert = std.debug.assert;
 const Ast = std.zig.Ast;
 const ast_walk = @import("ast_walk.zig");
+const call_expr = @import("analysis/call_expr.zig");
+const parsed_file = @import("parsed_file.zig");
 
 const FunctionRecord = struct {
     canonical_name: []const u8,
@@ -126,16 +128,46 @@ pub fn build_from_path(allocator: std.mem.Allocator, input_path: []const u8) !Ca
     assert(input_path.len > 0);
     assert(std.mem.indexOfScalar(u8, input_path, 0) == null);
     if (input_path.len == 0) return error.InvalidInputPath;
+    var input_paths = std.array_list.Managed([]const u8).init(allocator);
+    defer input_paths.deinit();
+    try input_paths.append(input_path);
+    return build_from_paths(allocator, &input_paths);
+}
+
+pub fn build_from_paths(
+    allocator: std.mem.Allocator,
+    input_paths: *const std.array_list.Managed([]const u8),
+) !CallGraph {
+    assert(input_paths.items.len > 0);
+    if (input_paths.items.len == 0) return error.InvalidInputPath;
+
     var graph = CallGraph.init(allocator);
     errdefer graph.deinit();
 
     const arena = graph.arena.allocator();
-    const root_path = try std.fs.path.resolve(arena, &.{input_path});
     var zig_files = std.array_list.Managed([]const u8).init(arena);
     var seen_files = std.StringHashMap(void).init(arena);
-    try collect_zig_files(arena, root_path, &zig_files);
-    for (zig_files.items) |file_path| {
-        try seen_files.put(file_path, {});
+
+    const zig_file_queue_bound_limit: usize = 16384;
+    for (input_paths.items) |input_path| {
+        assert(input_path.len > 0);
+        assert(std.mem.indexOfScalar(u8, input_path, 0) == null);
+        if (input_path.len == 0) return error.InvalidInputPath;
+
+        const root_path = try std.fs.path.resolve(arena, &.{input_path});
+        var root_files = std.array_list.Managed([]const u8).init(arena);
+        try collect_zig_files(arena, root_path, &root_files);
+
+        for (root_files.items) |file_path| {
+            if (seen_files.contains(file_path)) {
+                continue;
+            }
+            try seen_files.put(file_path, {});
+            if (zig_files.items.len >= zig_file_queue_bound_limit) {
+                return error.FileQueueBoundExceeded;
+            }
+            try commit(&zig_files, file_path);
+        }
     }
 
     var modules = std.array_list.Managed(ModuleRecord).init(arena);
@@ -147,7 +179,6 @@ pub fn build_from_path(allocator: std.mem.Allocator, input_path: []const u8) !Ca
     var fn_by_file_owner_name = std.StringHashMap([]const u8).init(arena);
 
     var file_index: usize = 0;
-    const zig_file_queue_bound_limit: usize = 16384;
     var collect_ctx = BuildCollectCtx{
         .graph = &graph,
         .zig_files = &zig_files,
@@ -195,20 +226,14 @@ fn process_file_and_collect(
     assert(file_path.len > 0);
     assert(zig_file_queue_bound_limit > 0);
     if (file_path.len == 0) return;
-    const source = std.Io.Dir.cwd().readFileAllocOptions(
-        std.Options.debug_io,
-        file_path,
-        arena,
-        std.Io.Limit.limited(16 * 1024 * 1024),
-        .of(u8),
-        0,
-    ) catch |err| {
+    var parsed = parsed_file.parse(arena, file_path) catch |err| {
         if (err == error.FileNotFound) return;
         return err;
     };
+    const source = parsed.source;
+    const ast = parsed.tree;
 
     try ctx.graph.files.append(arena, file_path);
-    const ast = try Ast.parse(arena, source, .zig);
 
     var module = ModuleRecord{
         .path = file_path,
@@ -462,7 +487,7 @@ fn walk_body_visit_node(
             const call = tree.fullCall(&call_buf, node) orelse return .visit_children;
 
             var path: CallPath = .{};
-            collect_call_path(tree, call.ast.fn_expr, &path);
+            call_expr.collect_call_path_into(8, tree, call.ast.fn_expr, &path.parts, &path.len);
 
             if (try resolve_call_target(
                 ctx.arena,
@@ -516,7 +541,7 @@ fn resolve_call_target(
     return resolve_field_call(
         arena,
         path.parts[0],
-        path.parts[path.len - 1],
+        path.parts[@as(usize, path.len - 1)],
         function.file_path,
         module,
         local_var_types,
@@ -544,49 +569,15 @@ fn owner_type_from_init(ast: *const Ast, init_node: Ast.Node.Index) ?[]const u8 
 
 const CallPath = struct {
     parts: [8][]const u8 = undefined,
-    len: usize = 0,
+    len: u8 = 0,
 
     fn append(self: *CallPath, value: []const u8) void {
-        if (self.len < self.parts.len) {
-            self.parts[self.len] = value;
+        if (@as(usize, self.len) < self.parts.len) {
+            self.parts[@as(usize, self.len)] = value;
             self.len += 1;
         }
     }
 };
-
-fn collect_call_path(ast: *const Ast, expr_node: Ast.Node.Index, path: *CallPath) void {
-    assert(ast.nodes.len > 0);
-    assert(ast.nodes.items(.main_token).len == ast.nodes.len);
-    assert(path.len <= path.parts.len);
-    assert(expr_node == .root or @intFromEnum(expr_node) < ast.nodes.len);
-    if (expr_node == .root or @intFromEnum(expr_node) >= ast.nodes.len) return;
-
-    switch (ast.nodes.items(.tag)[@intFromEnum(expr_node)]) {
-        .identifier => {
-            const token = ast.nodes.items(.main_token)[@intFromEnum(expr_node)];
-            path.append(ast.tokenSlice(token));
-        },
-        .field_access => {
-            const data = ast.nodeData(expr_node);
-            const lhs, const field_token = data.node_and_token;
-            collect_call_path(ast, lhs, path);
-            path.append(ast.tokenSlice(field_token));
-        },
-        .grouped_expression,
-        .unwrap_optional,
-        => {
-            const child = ast.nodeData(expr_node).node_and_token[0];
-            collect_call_path(ast, child, path);
-        },
-        .@"try",
-        .@"comptime",
-        => {
-            const child = ast.nodeData(expr_node).node;
-            collect_call_path(ast, child, path);
-        },
-        else => {},
-    }
-}
 
 fn resolve_field_call(
     arena: std.mem.Allocator,

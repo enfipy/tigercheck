@@ -56,8 +56,14 @@ pub fn main(init: std.process.Init) !void {
     );
 
     try report_benchmark_result(allocator, stdout, &cli, summaries.items, total_ms);
-    try enforce_budget(stdout, cli.budget_ms, total_ms);
+    const within_budget = try enforce_budget(stdout, cli.budget_ms, total_ms);
+    if (within_budget) {
+        try stdout.writeAll("perf-bench: OK\n");
+        try stdout.flush();
+        return;
+    }
     try stdout.flush();
+    std.process.exit(1);
 }
 
 fn parse_cli_options(init: std.process.Init, allocator: std.mem.Allocator) !CliOptions {
@@ -180,7 +186,6 @@ fn report_benchmark_result(
         "perf-bench: total_elapsed_ms={d} budget_ms={d}\n",
         .{ total_ms, cli.budget_ms },
     );
-    try stdout.writeAll("perf-bench: OK\n");
 }
 
 fn report_json(
@@ -229,15 +234,15 @@ fn report_target_text(stdout: *std.Io.Writer, summary: TargetSummary) !void {
     );
 }
 
-fn enforce_budget(stdout: *std.Io.Writer, budget_ms: u64, total_ms: u64) !void {
+fn enforce_budget(stdout: *std.Io.Writer, budget_ms: u64, total_ms: u64) !bool {
     assert(budget_ms > 0);
-    if (total_ms <= budget_ms) return;
+    if (total_ms <= budget_ms) return true;
 
     try stdout.print(
         "perf-bench: budget exceeded by {d}ms\n",
         .{total_ms - budget_ms},
     );
-    std.process.exit(1);
+    return false;
 }
 
 fn run_target(
@@ -293,10 +298,11 @@ fn benchmark_once(
     assert(target.len > 0);
     if (tiger_check_bin.len == 0 or target.len == 0) return error.InvalidInputPath;
 
-    const start_ms = wall_clock_ms();
+    const start = std.Io.Timestamp.now(io, .awake);
     try execute_target_process(allocator, io, stdout, tiger_check_bin, target);
-    const elapsed_ms = wall_clock_ms() - start_ms;
-    return elapsed_ms;
+    const ended = std.Io.Timestamp.now(io, .awake);
+    const elapsed = start.durationTo(ended);
+    return duration_ms_non_negative(elapsed);
 }
 
 fn execute_target_process(
@@ -311,7 +317,7 @@ fn execute_target_process(
     if (tiger_check_bin.len == 0 or target.len == 0) return error.InvalidInputPath;
 
     const result = std.process.run(allocator, io, .{
-        .argv = &.{ tiger_check_bin, target },
+        .argv = &.{ tiger_check_bin, "--allow-findings", target },
     }) catch |err| {
         try stdout.print("perf-bench: failed to run target={s}: {}\n", .{ target, err });
         std.process.exit(1);
@@ -350,13 +356,8 @@ fn percentile(samples_sorted: []const u64, numerator: u32, denominator: u32) u64
     return samples_sorted[index];
 }
 
-fn wall_clock_ms() u64 {
-    var tv: std.c.timeval = undefined;
-    const rc = std.c.gettimeofday(&tv, null);
-    if (rc != 0) {
-        std.debug.panic("internal invariant violated: gettimeofday failed", .{});
-    }
-    const secs: u64 = @intCast(tv.sec);
-    const usecs: u64 = @intCast(tv.usec);
-    return secs * 1000 + (usecs / 1000);
+fn duration_ms_non_negative(duration: std.Io.Duration) u64 {
+    if (duration.nanoseconds <= 0) return 0;
+    const elapsed_ms_i96 = @divTrunc(duration.nanoseconds, std.time.ns_per_ms);
+    return @intCast(elapsed_ms_i96);
 }

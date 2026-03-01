@@ -1,3 +1,4 @@
+// expect-rule: TS09_FUNCTION_SHAPE
 pub fn main() void {
     long_shape();
 }

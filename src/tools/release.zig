@@ -53,7 +53,7 @@ const release_script_template =
     \\echo "release: running quality gates"
     \\./zig/zig build test
     \\./zig/zig build precision-check
-    \\./zig/zig build check-strict -Dstyle-path=./src/libtigercheck
+    \\./zig/zig build run -- --gates policy,perf ./src/libtigercheck
     \\
     \\rm -rf zig-out/dist/tigercheck
     \\mkdir -p zig-out/dist/tigercheck
@@ -93,7 +93,7 @@ const release_script_template =
     \\source_sha=${SHA}
     \\zig_version=${ZIG_VERSION}
     \\targets=${TARGET_LIST}
-    \\gates=test,precision-check,check-strict
+    \\gates=test,precision-check,run(--gates policy,perf)
     \\EOF
     \\
     \\cat > zig-out/dist/tigercheck/RELEASE_NOTES.md <<EOF
@@ -102,7 +102,7 @@ const release_script_template =
     \\- Source SHA: ${SHA}
     \\- Zig version: ${ZIG_VERSION}
     \\- Targets: ${TARGET_LIST}
-    \\- Quality gates: test, precision-check, check-strict
+    \\- Quality gates: test, precision-check, run (--gates policy,perf)
     \\EOF
     \\
     \\if [ "${DRY_RUN}" = "1" ]; then
@@ -225,7 +225,7 @@ const validate_script =
     \\echo "release: running validation quality gates"
     \\./zig/zig build test
     \\./zig/zig build precision-check
-    \\./zig/zig build check-strict -Dstyle-path=./src/libtigercheck
+    \\./zig/zig build run -- --gates policy,perf ./src/libtigercheck
     \\
     \\echo "release: release ${TAG} validated"
 ;

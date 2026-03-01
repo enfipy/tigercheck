@@ -1,3 +1,4 @@
+// expect-rule: TS13_BOOLEAN_SPLIT
 pub fn main() void {
     const ready = true;
     const healthy = true;

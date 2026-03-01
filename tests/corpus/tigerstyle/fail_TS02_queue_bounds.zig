@@ -1,3 +1,4 @@
+// expect-rule: TS02_EXPLICIT_BOUNDS
 const Queue = struct {
     len: usize = 0,
 

@@ -1,3 +1,4 @@
+// expect-rule: TS14_POSITIVE_INVARIANTS
 const std = @import("std");
 
 fn main() void {
