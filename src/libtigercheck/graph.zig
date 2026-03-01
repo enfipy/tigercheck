@@ -128,16 +128,40 @@ pub fn build_from_path(allocator: std.mem.Allocator, input_path: []const u8) !Ca
     assert(input_path.len > 0);
     assert(std.mem.indexOfScalar(u8, input_path, 0) == null);
     if (input_path.len == 0) return error.InvalidInputPath;
+    return build_from_paths(allocator, &.{input_path});
+}
+
+pub fn build_from_paths(allocator: std.mem.Allocator, input_paths: []const []const u8) !CallGraph {
+    assert(input_paths.len > 0);
+    if (input_paths.len == 0) return error.InvalidInputPath;
+
     var graph = CallGraph.init(allocator);
     errdefer graph.deinit();
 
     const arena = graph.arena.allocator();
-    const root_path = try std.fs.path.resolve(arena, &.{input_path});
     var zig_files = std.array_list.Managed([]const u8).init(arena);
     var seen_files = std.StringHashMap(void).init(arena);
-    try collect_zig_files(arena, root_path, &zig_files);
-    for (zig_files.items) |file_path| {
-        try seen_files.put(file_path, {});
+
+    const zig_file_queue_bound_limit: usize = 16384;
+    for (input_paths) |input_path| {
+        assert(input_path.len > 0);
+        assert(std.mem.indexOfScalar(u8, input_path, 0) == null);
+        if (input_path.len == 0) return error.InvalidInputPath;
+
+        const root_path = try std.fs.path.resolve(arena, &.{input_path});
+        var root_files = std.array_list.Managed([]const u8).init(arena);
+        try collect_zig_files(arena, root_path, &root_files);
+
+        for (root_files.items) |file_path| {
+            if (seen_files.contains(file_path)) {
+                continue;
+            }
+            try seen_files.put(file_path, {});
+            if (zig_files.items.len >= zig_file_queue_bound_limit) {
+                return error.FileQueueBoundExceeded;
+            }
+            try commit(&zig_files, file_path);
+        }
     }
 
     var modules = std.array_list.Managed(ModuleRecord).init(arena);
@@ -149,7 +173,6 @@ pub fn build_from_path(allocator: std.mem.Allocator, input_path: []const u8) !Ca
     var fn_by_file_owner_name = std.StringHashMap([]const u8).init(arena);
 
     var file_index: usize = 0;
-    const zig_file_queue_bound_limit: usize = 16384;
     var collect_ctx = BuildCollectCtx{
         .graph = &graph,
         .zig_files = &zig_files,

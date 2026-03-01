@@ -30,6 +30,7 @@ pub const Result = diagnostics.Result;
 
 pub const AnalyzeOptions = struct {
     r4_max_function_lines: ?usize = null,
+    apply_policy_gate: bool = false,
 };
 
 pub fn analyze_with_options(
@@ -47,7 +48,6 @@ pub fn analyze_with_options(
     assert(call_graph.files.items.len <= call_graph.files.capacity);
     var result = Result.init(allocator);
     errdefer result.deinit();
-    result.policy_profile = active_policy.profile_name;
 
     var green = std.StringHashMap(void).init(allocator);
     defer green.deinit();
@@ -80,7 +80,10 @@ pub fn analyze_with_options(
     );
 
     try diagnostics.apply_precedence_and_dedup(&result);
-    try apply_profile_policy(active_policy, &runtime_files, &result);
+    if (options.apply_policy_gate) {
+        result.policy_profile = active_policy.profile_name;
+        try apply_profile_policy(active_policy, &runtime_files, &result);
+    }
     try append_pedantic_pipeline_diagnostics(allocator, &result);
 
     return result;

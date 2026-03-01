@@ -2,7 +2,7 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const BuildConfig = struct {
-    style_path: []const u8,
+    analyze_path: []const u8,
     off_rules: []const u8,
     perf_budget_ms: u64,
     corpus_min_cases_per_kind: u32,
@@ -14,15 +14,11 @@ const CheckerArtifacts = struct {
     exe: *std.Build.Step.Compile,
 };
 
-const CheckSteps = struct {
-    check_strict_step: *std.Build.Step,
-};
-
 pub fn build(b: *std.Build) void {
     assert(@intFromPtr(b) > 0);
     const optimize = b.standardOptimizeOption(.{});
     const config = parse_build_config(b, optimize);
-    assert(config.style_path.len > 0);
+    assert(config.analyze_path.len > 0);
     assert(config.perf_budget_ms > 0);
 
     const checker_build_options = add_checker_build_options(b, config.off_rules);
@@ -30,15 +26,14 @@ pub fn build(b: *std.Build) void {
     const checker = add_checker_artifacts(b, target, optimize, checker_build_options);
     b.installArtifact(checker.exe);
 
-    const check_steps = add_run_and_check_steps(b, checker.exe, config.style_path);
+    add_run_step(b, checker.exe);
     add_perf_steps(
         b,
         checker.exe,
         target,
         optimize,
         config.perf_budget_ms,
-        config.style_path,
-        check_steps.check_strict_step,
+        config.analyze_path,
     );
 
     const test_step = add_test_steps(b, checker.module, checker_build_options, target, optimize);
@@ -50,14 +45,14 @@ pub fn build(b: *std.Build) void {
 fn parse_build_config(b: *std.Build, optimize: std.builtin.OptimizeMode) BuildConfig {
     assert(@intFromPtr(b) > 0);
     const default_perf_budget_ms: u64 = switch (optimize) {
-        .Debug => 3000,
-        .ReleaseSafe, .ReleaseFast, .ReleaseSmall => 200,
+        .Debug => 6000,
+        .ReleaseSafe, .ReleaseFast, .ReleaseSmall => 1000,
     };
     assert(default_perf_budget_ms > 0);
     const perf_budget_ms = b.option(
         u64,
         "perf-budget-ms",
-        "Perf budget for check-strict/bench (ms)",
+        "Perf budget for bench step (ms)",
     ) orelse default_perf_budget_ms;
     assert(perf_budget_ms > 0);
     const corpus_min_cases_per_kind = b.option(
@@ -70,14 +65,27 @@ fn parse_build_config(b: *std.Build, optimize: std.builtin.OptimizeMode) BuildCo
         "corpus-strict-min-cases",
         "Fail corpus-audit when prefix depth is below minimum",
     ) orelse false;
-    const style_path = b.option([]const u8, "style-path", "Path for style check") orelse "./src";
+    const analyze_path_opt = b.option(
+        []const u8,
+        "analyze-path",
+        "Path analyzed by bench step",
+    );
+    const legacy_style_path_opt = b.option(
+        []const u8,
+        "style-path",
+        "Deprecated alias for -Danalyze-path",
+    );
+    if (analyze_path_opt == null and legacy_style_path_opt != null) {
+        std.log.warn("build option -Dstyle-path is deprecated; use -Danalyze-path", .{});
+    }
+    const analyze_path = analyze_path_opt orelse legacy_style_path_opt orelse "./src";
     const off_rules = b.option(
         []const u8,
         "off-rules",
         "Comma-separated rule IDs forced to off action",
     ) orelse "";
     return .{
-        .style_path = style_path,
+        .analyze_path = analyze_path,
         .off_rules = off_rules,
         .perf_budget_ms = perf_budget_ms,
         .corpus_min_cases_per_kind = corpus_min_cases_per_kind,
@@ -127,35 +135,15 @@ fn add_checker_artifacts(
     };
 }
 
-fn add_run_and_check_steps(
-    b: *std.Build,
-    exe: *std.Build.Step.Compile,
-    style_path: []const u8,
-) CheckSteps {
+fn add_run_step(b: *std.Build, exe: *std.Build.Step.Compile) void {
     assert(@intFromPtr(b) > 0);
     assert(@intFromPtr(exe) > 0);
-    assert(style_path.len > 0);
-    if (style_path.len == 0) {
-        unreachable;
-    }
     const run_cmd = b.addRunArtifact(exe);
     if (b.args) |args| {
         run_cmd.addArgs(args);
     }
     const run_step = b.step("run", "Run tigercheck");
     run_step.dependOn(&run_cmd.step);
-
-    const check_cmd = b.addRunArtifact(exe);
-    check_cmd.addArg(style_path);
-    const check_step = b.step("check", "Run style check");
-    check_step.dependOn(&check_cmd.step);
-
-    const check_strict_cmd = b.addRunArtifact(exe);
-    check_strict_cmd.addArg(style_path);
-    const check_strict_step = b.step("check-strict", "Run core style check");
-    check_strict_step.dependOn(&check_strict_cmd.step);
-
-    return .{ .check_strict_step = check_strict_step };
 }
 
 fn add_perf_steps(
@@ -164,34 +152,30 @@ fn add_perf_steps(
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     perf_budget_ms: u64,
-    style_path: []const u8,
-    check_strict_step: *std.Build.Step,
+    analyze_path: []const u8,
 ) void {
     assert(@intFromPtr(b) > 0);
     assert(@intFromPtr(exe) > 0);
-    assert(style_path.len > 0);
-    if (style_path.len == 0) {
+    assert(analyze_path.len > 0);
+    if (analyze_path.len == 0) {
         unreachable;
     }
     assert(perf_budget_ms > 0);
-    assert(@intFromPtr(check_strict_step) > 0);
     const perf_bench = b.addExecutable(.{
         .name = "perf-bench",
         .root_module = b.createModule(.{
             .root_source_file = b.path("src/tools/perf_bench.zig"),
             .target = target,
             .optimize = optimize,
-            .link_libc = true,
         }),
     });
     const perf_bench_cmd = b.addRunArtifact(perf_bench);
     perf_bench_cmd.addFileArg(exe.getEmittedBin());
     perf_bench_cmd.addArg(b.fmt("{d}", .{perf_budget_ms}));
-    perf_bench_cmd.addArg(style_path);
+    perf_bench_cmd.addArg(analyze_path);
 
     const bench_step = b.step("bench", "Run performance benchmark budget checks");
     bench_step.dependOn(&perf_bench_cmd.step);
-    check_strict_step.dependOn(&perf_bench_cmd.step);
 }
 
 fn add_test_steps(

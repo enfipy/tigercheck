@@ -14,12 +14,25 @@ const OutputFormat = enum {
     json,
 };
 
+const GateSet = struct {
+    policy: bool = false,
+    perf: bool = false,
+};
+
+const perf_gate_budget_ms_default: u64 = 3000;
+
 const CliOptions = struct {
     dump_graph: bool,
     explain_policy: bool,
     explain_strict: bool,
+    allow_findings: bool,
     output_format: OutputFormat,
-    target_path: []const u8,
+    gates: GateSet,
+    target_paths: std.array_list.Managed([]const u8),
+
+    fn deinit(self: *CliOptions) void {
+        self.target_paths.deinit();
+    }
 };
 
 const JSONDiagnostic = struct {
@@ -151,18 +164,24 @@ const LocationCache = struct {
 
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
+    const io = init.io;
 
-    const cli = parse_cli_options(init) catch {
+    var cli = parse_cli_options(init) catch {
         print_usage();
         std.process.exit(1);
     };
-    assert(cli.target_path.len > 0);
+    defer cli.deinit();
+    assert(cli.target_paths.items.len > 0);
 
-    var call_graph = try libtigercheck.graph.build_from_path(allocator, cli.target_path);
+    const perf_started_at: std.Io.Timestamp = if (cli.gates.perf)
+        std.Io.Timestamp.now(io, .awake)
+    else
+        std.Io.Timestamp.zero;
+
+    var call_graph = try libtigercheck.graph.build_from_paths(allocator, cli.target_paths.items);
     defer call_graph.deinit();
 
     var stdout_buf: [4096]u8 = undefined;
-    const io = init.io;
     var stdout_writer = std.Io.File.stdout().writerStreaming(io, &stdout_buf);
     const stdout = &stdout_writer.interface;
 
@@ -172,9 +191,18 @@ pub fn main(init: std.process.Init) !void {
         return;
     }
 
-    var result = try libtigercheck.analysis.analyze_with_options(allocator, &call_graph, .{});
+    var result = try libtigercheck.analysis.analyze_with_options(allocator, &call_graph, .{
+        .apply_policy_gate = cli.gates.policy,
+    });
     defer result.deinit();
     assert(result.diagnostics.items.len == result.warning_count + result.critical_count);
+    const has_findings = result.critical_count > 0 or result.warning_count > 0;
+    const perf_elapsed_ms: u64 = if (cli.gates.perf) blk: {
+        const ended_at = std.Io.Timestamp.now(io, .awake);
+        const elapsed = perf_started_at.durationTo(ended_at);
+        break :blk duration_ms_non_negative(elapsed);
+    } else 0;
+    const perf_gate_failed = cli.gates.perf and perf_elapsed_ms > perf_gate_budget_ms_default;
 
     var location_cache = LocationCache.init(allocator);
     defer location_cache.deinit();
@@ -182,7 +210,13 @@ pub fn main(init: std.process.Init) !void {
     if (cli.output_format == .json) {
         try print_json_run_output(allocator, stdout, &location_cache, result);
         try stdout.flush();
-        if (result.critical_count > 0 or result.warning_count > 0) {
+        if (perf_gate_failed) {
+            std.debug.print(
+                "tigercheck: PERF_GATE failed elapsed_ms={d} budget_ms={d}\n",
+                .{ perf_elapsed_ms, perf_gate_budget_ms_default },
+            );
+        }
+        if ((has_findings and !cli.allow_findings) or perf_gate_failed) {
             std.process.exit(1);
         }
         return;
@@ -192,7 +226,7 @@ pub fn main(init: std.process.Init) !void {
         try print_diagnostic(stdout, &location_cache, diag);
     }
 
-    if (result.critical_count > 0 or result.warning_count > 0) {
+    if (has_findings) {
         try print_issue_histograms(allocator, stdout, result);
     }
 
@@ -204,13 +238,28 @@ pub fn main(init: std.process.Init) !void {
         try print_strict_explanation(allocator, stdout, result);
     }
 
-    if (result.critical_count > 0 or result.warning_count > 0) {
+    if (perf_gate_failed) {
+        try stdout.print(
+            "\n[CRITICAL] [PERF_GATE] analysis exceeded budget; elapsed_ms={d} budget_ms={d}\n",
+            .{ perf_elapsed_ms, perf_gate_budget_ms_default },
+        );
+    }
+
+    if (has_findings) {
         try stdout.print(
             "\n{d} critical, {d} warning(s)\n",
             .{ result.critical_count, result.warning_count },
         );
+    }
+
+    if ((has_findings and !cli.allow_findings) or perf_gate_failed) {
         try stdout.flush();
         std.process.exit(1);
+    }
+
+    if (has_findings) {
+        try stdout.flush();
+        return;
     }
 
     try stdout.writeAll("OK\n");
@@ -221,8 +270,10 @@ fn print_usage() void {
     std.debug.print(
         "usage: tigercheck [--dump-graph] [--explain-policy] " ++
             "[--explain-strict] " ++
+            "[--allow-findings] " ++
             "[--format text|json] " ++
-            "<path>\n",
+            "[--gates policy,perf] " ++
+            "<path> [path ...]\n",
         .{},
     );
 }
@@ -233,7 +284,8 @@ fn parse_cli_options(init: std.process.Init) !CliOptions {
     const argv0 = args.next() orelse return error.InvalidArguments;
     assert(argv0.len > 0);
 
-    var state = CliParseState{};
+    var state = CliParseState.init(init.gpa);
+    errdefer state.deinit();
     const max_cli_args: u16 = 64;
     var parsed_all = false;
     var step: u16 = 0;
@@ -247,16 +299,16 @@ fn parse_cli_options(init: std.process.Init) !CliOptions {
     if (!parsed_all) {
         return error.InvalidArguments;
     }
-
-    const resolved_target = state.target_path orelse return error.InvalidArguments;
-    assert(std.mem.indexOfScalar(u8, resolved_target, 0) == null);
+    if (state.target_paths.items.len == 0) return error.InvalidArguments;
 
     return .{
         .dump_graph = state.dump_graph,
         .explain_policy = state.explain_policy,
         .explain_strict = state.explain_strict,
+        .allow_findings = state.allow_findings,
         .output_format = state.output_format,
-        .target_path = resolved_target,
+        .gates = state.gates,
+        .target_paths = state.target_paths,
     };
 }
 
@@ -264,8 +316,20 @@ const CliParseState = struct {
     dump_graph: bool = false,
     explain_policy: bool = false,
     explain_strict: bool = false,
+    allow_findings: bool = false,
     output_format: OutputFormat = .text,
-    target_path: ?[]const u8 = null,
+    gates: GateSet = .{},
+    target_paths: std.array_list.Managed([]const u8),
+
+    fn init(allocator: std.mem.Allocator) CliParseState {
+        return .{
+            .target_paths = std.array_list.Managed([]const u8).init(allocator),
+        };
+    }
+
+    fn deinit(self: *CliParseState) void {
+        self.target_paths.deinit();
+    }
 };
 
 fn parse_cli_token(
@@ -274,7 +338,6 @@ fn parse_cli_token(
     state: *CliParseState,
 ) !void {
     assert(arg.len > 0);
-    assert(state.target_path == null or state.target_path.?.len > 0);
     if (arg.len == 0) return error.InvalidArguments;
 
     switch (cli_arg_kind(arg)) {
@@ -283,8 +346,14 @@ fn parse_cli_token(
             state.output_format = parse_output_format_arg(value) orelse
                 return error.InvalidArguments;
         },
+        .gates => {
+            const value = args.next() orelse return error.InvalidArguments;
+            const parsed = parse_gates_arg(value) orelse return error.InvalidArguments;
+            state.gates.policy = state.gates.policy or parsed.policy;
+            state.gates.perf = state.gates.perf or parsed.perf;
+        },
         .positional => {
-            state.target_path = try parse_positional_arg(state.target_path, arg);
+            try parse_positional_arg(&state.target_paths, arg);
         },
         else => |kind| {
             try apply_simple_cli_flag(kind, state);
@@ -297,6 +366,8 @@ fn apply_simple_cli_flag(kind: CliArgKind, state: *CliParseState) !void {
         kind == .dump_graph or
             kind == .explain_policy or
             kind == .explain_strict or
+            kind == .allow_findings or
+            kind == .gates or
             kind == .unknown,
     );
     assert(state.output_format == .text or state.output_format == .json);
@@ -305,9 +376,39 @@ fn apply_simple_cli_flag(kind: CliArgKind, state: *CliParseState) !void {
         .dump_graph => state.dump_graph = true,
         .explain_policy => state.explain_policy = true,
         .explain_strict => state.explain_strict = true,
+        .allow_findings => state.allow_findings = true,
+        .gates => return error.InvalidArguments,
         .unknown => return error.InvalidArguments,
         .format, .positional => return error.InvalidArguments,
     }
+}
+
+fn parse_gates_arg(value: []const u8) ?GateSet {
+    assert(value.len > 0);
+    if (value.len == 0) return null;
+
+    var out = GateSet{};
+    var saw_gate = false;
+    var tokens = std.mem.tokenizeScalar(u8, value, ',');
+    while (tokens.next()) |raw_token| {
+        const token = std.mem.trim(u8, raw_token, " \t\r\n");
+        if (token.len == 0) return null;
+        if (std.mem.eql(u8, token, "policy")) {
+            if (out.policy) return null;
+            out.policy = true;
+            saw_gate = true;
+            continue;
+        }
+        if (std.mem.eql(u8, token, "perf")) {
+            if (out.perf) return null;
+            out.perf = true;
+            saw_gate = true;
+            continue;
+        }
+        return null;
+    }
+    if (!saw_gate) return null;
+    return out;
 }
 
 fn parse_output_format_arg(value: []const u8) ?OutputFormat {
@@ -318,18 +419,20 @@ fn parse_output_format_arg(value: []const u8) ?OutputFormat {
     return null;
 }
 
-fn parse_positional_arg(target_path: ?[]const u8, arg: []const u8) !?[]const u8 {
+fn parse_positional_arg(target_paths: *std.array_list.Managed([]const u8), arg: []const u8) !void {
     assert(arg.len > 0);
     if (arg.len == 0) return error.InvalidArguments;
-    if (target_path == null) return arg;
-    return error.InvalidArguments;
+    if (std.mem.indexOfScalar(u8, arg, 0) != null) return error.InvalidArguments;
+    try target_paths.append(arg);
 }
 
 const CliArgKind = enum {
     dump_graph,
     explain_policy,
     explain_strict,
+    allow_findings,
     format,
+    gates,
     positional,
     unknown,
 };
@@ -341,7 +444,9 @@ fn cli_arg_kind(arg: []const u8) CliArgKind {
     if (std.mem.eql(u8, arg, "--dump-graph")) return .dump_graph;
     if (std.mem.eql(u8, arg, "--explain-policy")) return .explain_policy;
     if (std.mem.eql(u8, arg, "--explain-strict")) return .explain_strict;
+    if (std.mem.eql(u8, arg, "--allow-findings")) return .allow_findings;
     if (std.mem.eql(u8, arg, "--format")) return .format;
+    if (std.mem.eql(u8, arg, "--gates")) return .gates;
     if (std.mem.startsWith(u8, arg, "--")) return .unknown;
     return .positional;
 }
@@ -723,6 +828,12 @@ fn extract_subject(message: []const u8) ?[]const u8 {
     return rest[0..second_rel];
 }
 
+fn duration_ms_non_negative(duration: std.Io.Duration) u64 {
+    if (duration.nanoseconds <= 0) return 0;
+    const elapsed_ms_i96 = @divTrunc(duration.nanoseconds, std.time.ns_per_ms);
+    return @intCast(elapsed_ms_i96);
+}
+
 test "all rule IDs are documented" {
     const allocator = std.testing.allocator;
     const readme = try std.Io.Dir.cwd().readFileAllocOptions(
@@ -801,6 +912,8 @@ test "diagnostic line snapshot" {
 test "cli arg kind rejects unknown flags" {
     try std.testing.expectEqual(CliArgKind.unknown, cli_arg_kind("--unknownz"));
     try std.testing.expectEqual(CliArgKind.format, cli_arg_kind("--format"));
+    try std.testing.expectEqual(CliArgKind.gates, cli_arg_kind("--gates"));
+    try std.testing.expectEqual(CliArgKind.allow_findings, cli_arg_kind("--allow-findings"));
     try std.testing.expectEqual(CliArgKind.positional, cli_arg_kind("src"));
 }
 
@@ -808,4 +921,21 @@ test "parse output format arg" {
     try std.testing.expectEqual(OutputFormat.text, parse_output_format_arg("text").?);
     try std.testing.expectEqual(OutputFormat.json, parse_output_format_arg("json").?);
     try std.testing.expect(parse_output_format_arg("yaml") == null);
+}
+
+test "parse gates arg" {
+    const both = parse_gates_arg("policy,perf").?;
+    try std.testing.expect(both.policy);
+    try std.testing.expect(both.perf);
+
+    const spaced = parse_gates_arg(" policy , perf ").?;
+    try std.testing.expect(spaced.policy);
+    try std.testing.expect(spaced.perf);
+
+    const policy_only = parse_gates_arg("policy").?;
+    try std.testing.expect(policy_only.policy);
+    try std.testing.expect(!policy_only.perf);
+
+    try std.testing.expect(parse_gates_arg("perf,perf") == null);
+    try std.testing.expect(parse_gates_arg("unknown") == null);
 }
