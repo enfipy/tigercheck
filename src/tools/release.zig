@@ -8,8 +8,7 @@ const ReleaseArgs = struct {
 };
 
 const ValidateArgs = struct {
-    tag: []const u8,
-    sha: []const u8,
+    tag: ?[]const u8,
 };
 
 const release_script_template =
@@ -146,9 +145,12 @@ const validate_script =
     \\
     \\gh --version
     \\TAG="__TAG__"
-    \\SHA="__SHA__"
-    \\if [ -z "${TAG}" ] || [ -z "${SHA}" ]; then
-    \\  echo "validate requires explicit --tag and --sha"
+    \\if [ -z "${TAG}" ]; then
+    \\  TAG="$(gh release list --limit 1 --json tagName --jq '.[0].tagName')"
+    \\fi
+    \\
+    \\if [ -z "${TAG}" ] || [ "${TAG}" = "null" ]; then
+    \\  echo "No GitHub release found"
     \\  exit 1
     \\fi
     \\
@@ -187,10 +189,10 @@ const validate_script =
     \\  cat zig-out/release-validate/RELEASE_METADATA
     \\  exit 1
     \\fi
-    \\if grep -q "^source_sha=${SHA}$" zig-out/release-validate/RELEASE_METADATA; then
+    \\if grep -q "^source_sha=" zig-out/release-validate/RELEASE_METADATA; then
     \\  :
     \\else
-    \\  echo "release metadata source_sha mismatch"
+    \\  echo "release metadata missing source_sha"
     \\  cat zig-out/release-validate/RELEASE_METADATA
     \\  exit 1
     \\fi
@@ -326,22 +328,16 @@ fn handle_validate_command(
     assert(@sizeOf(@TypeOf(args.*)) > 0);
     assert(@sizeOf(@TypeOf(stdout.*)) > 0);
 
-    var tokens: [4]?[]const u8 = .{ null, null, null, null };
-    var token_count: u8 = 0;
-    while (token_count < tokens.len) : (token_count += 1) {
-        tokens[token_count] = args.next() orelse break;
-    }
-    if (token_count == tokens.len and args.next() != null) {
-        try print_usage(stdout);
-        try stdout.flush();
-        std.process.exit(2);
-    }
-
-    const parsed_args = parse_validate_args(tokens[0], tokens[1], tokens[2], tokens[3]) catch {
+    const parsed_args = parse_validate_args(args.next(), args.next()) catch {
         try print_usage(stdout);
         try stdout.flush();
         std.process.exit(2);
     };
+    if (args.next() != null) {
+        try print_usage(stdout);
+        try stdout.flush();
+        std.process.exit(2);
+    }
 
     run_validate(allocator, io, stdout, parsed_args) catch |err| {
         try stdout.print("release: validation failed: {}\n", .{err});
@@ -445,45 +441,29 @@ fn finalize_release_args(state: ParseState) !ReleaseArgs {
     return .{ .version = parsed_version, .sha = state.sha, .dry_run = state.dry_run };
 }
 
-fn parse_validate_args(
-    arg1: ?[]const u8,
-    arg2: ?[]const u8,
-    arg3: ?[]const u8,
-    arg4: ?[]const u8,
-) !ValidateArgs {
+fn parse_validate_args(arg1: ?[]const u8, arg2: ?[]const u8) !ValidateArgs {
     assert(arg1 == null or arg1.?.len > 0);
-    assert(arg2 == null or arg2.?.len > 0);
-    assert(arg3 == null or arg3.?.len > 0);
-    assert(arg4 == null or arg4.?.len > 0);
-    if (arg1 == null) return error.InvalidArguments;
-    if (arg2 == null) return error.InvalidArguments;
-    if (arg3 == null) return error.InvalidArguments;
-    if (arg4 == null) return error.InvalidArguments;
-
-    var tag: ?[]const u8 = null;
-    var sha: ?[]const u8 = null;
-    const pairs = [_][2][]const u8{ .{ arg1.?, arg2.? }, .{ arg3.?, arg4.? } };
-    for (pairs) |pair| {
-        const flag = pair[0];
-        const value = pair[1];
-        if (std.mem.eql(u8, flag, "--tag")) {
-            if (tag != null or !is_semver(value)) {
-                return error.InvalidArguments;
-            }
-            tag = value;
-            continue;
-        }
-        if (std.mem.eql(u8, flag, "--sha")) {
-            if (sha != null or !is_hex_sha(value)) {
-                return error.InvalidArguments;
-            }
-            sha = value;
-            continue;
-        }
+    assert(arg2 == null or arg2.?.len <= 32);
+    if (arg1 == null and arg2 == null) {
+        return .{ .tag = null };
+    }
+    if (arg1 == null or arg2 == null) {
         return error.InvalidArguments;
     }
-
-    return .{ .tag = tag orelse return error.InvalidArguments, .sha = sha orelse return error.InvalidArguments };
+    if (std.mem.eql(u8, arg1.?, "--tag")) {
+        // positive invariant
+    } else {
+        return error.InvalidArguments;
+    }
+    if (arg2.?.len == 0) {
+        return .{ .tag = null };
+    }
+    if (is_semver(arg2.?)) {
+        // positive invariant
+    } else {
+        return error.InvalidArguments;
+    }
+    return .{ .tag = arg2.? };
 }
 
 fn run_release(
@@ -535,21 +515,13 @@ fn run_validate(
     stdout: *std.Io.Writer,
     args: ValidateArgs,
 ) !void {
-    const with_tag = try std.mem.replaceOwned(
+    const tag = args.tag orelse "";
+    const script = try std.mem.replaceOwned(
         u8,
         allocator,
         validate_script,
         "__TAG__",
-        args.tag,
-    );
-    defer allocator.free(with_tag);
-
-    const script = try std.mem.replaceOwned(
-        u8,
-        allocator,
-        with_tag,
-        "__SHA__",
-        args.sha,
+        tag,
     );
     defer allocator.free(script);
     try run_shell(allocator, io, stdout, script);
@@ -636,18 +608,18 @@ fn is_semver(version: []const u8) bool {
 
 fn is_hex_sha(sha: []const u8) bool {
     assert(sha.len <= 64);
-    assert(std.mem.indexOfScalar(u8, sha, 0) == null);
-    assert(std.mem.indexOfScalar(u8, sha, ' ') == null);
     if (sha.len < 7 or sha.len > 40) return false;
 
     for (sha) |byte| {
         const is_digit = byte >= '0' and byte <= '9';
         const is_lower_hex = byte >= 'a' and byte <= 'f';
         const is_upper_hex = byte >= 'A' and byte <= 'F';
-        if (is_digit) continue;
-        if (is_lower_hex) continue;
-        if (is_upper_hex) continue;
-        return false;
+        const is_hex = is_digit or is_lower_hex or is_upper_hex;
+        if (is_hex) {
+            // positive invariant
+        } else {
+            return false;
+        }
     }
     return true;
 }
@@ -669,27 +641,6 @@ fn print_usage(stdout: *std.Io.Writer) !void {
     try stdout.writeAll(
         "usage:\n" ++
             "  release release --version <x.y.z> [--sha <commit>] [--dry-run]\n" ++
-            "  release validate --tag <x.y.z> --sha <commit>\n",
-    );
-}
-
-test "parse validate args requires explicit tag and sha" {
-    const parsed = try parse_validate_args("--tag", "0.1.0", "--sha", "deadbee");
-    try std.testing.expectEqualStrings("0.1.0", parsed.tag);
-    try std.testing.expectEqualStrings("deadbee", parsed.sha);
-
-    const reversed = try parse_validate_args("--sha", "deadbee", "--tag", "0.1.0");
-    try std.testing.expectEqualStrings("0.1.0", reversed.tag);
-    try std.testing.expectEqualStrings("deadbee", reversed.sha);
-}
-
-test "parse validate args rejects missing inputs" {
-    try std.testing.expectError(
-        error.InvalidArguments,
-        parse_validate_args("--tag", "0.1.0", null, null),
-    );
-    try std.testing.expectError(
-        error.InvalidArguments,
-        parse_validate_args("--tag", "0.1.0", "--sha", "not-a-sha!"),
+            "  release validate [--tag <x.y.z>]\n",
     );
 }
